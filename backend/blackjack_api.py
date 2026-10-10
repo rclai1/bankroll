@@ -11,6 +11,8 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Literal
 
+import os
+
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
@@ -43,8 +45,10 @@ class BetRequest(BaseModel):
 
 
 def _new_deck() -> list[str]:
+    seed = os.urandom(8)
     deck = [f"{rank} of {suit}" for suit in SUITS for rank in RANKS]
-    random.shuffle(deck)
+    generator = random.Random(seed)
+    generator.shuffle(deck)
     return deck
 
 
