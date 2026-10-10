@@ -32,7 +32,7 @@ if not connection:
 
 # SQLAlchemy's PostgreSQL dialect uses ``postgresql://`` (the older
 # ``postgres://`` spelling is still accepted in local environment files).
-connection_url = connection
+connection_url = connection.replace("postgres", "timescaledb", 1)
 engine = create_engine(connection_url, pool_pre_ping=True)
 
 metadata = MetaData()
