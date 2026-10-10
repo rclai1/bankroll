@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react";
-import Card, { CARD_H, EmptySlot } from "./Card";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import Card, { CARD_H, CARD_W, EmptySlot } from "./Card";
 import { AnimatedMoney, FloatingMoney, formatMoney, type FloatMoney } from "./Money";
 import { createGame, hit, placeBet, stand, type GameView } from "@/lib/blackjackApi";
 import { score } from "@/lib/scoring";
@@ -13,6 +13,44 @@ import { selectDealSound, selectHitSound } from "@/audio/soundConfig";
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
+function useHandLayoutAnimation(layoutKey: string) {
+  const ref = useRef<HTMLDivElement>(null);
+  const previousPositions = useRef(new Map<string, { left: number; top: number }>());
+
+  useLayoutEffect(() => {
+    const container = ref.current;
+    if (!container) return;
+
+    const currentPositions = new Map<string, { left: number; top: number }>();
+    container.querySelectorAll<HTMLElement>("[data-hand-card]").forEach((card) => {
+      const key = card.dataset.handCard;
+      if (!key) return;
+      const rect = card.getBoundingClientRect();
+      currentPositions.set(key, { left: rect.left, top: rect.top });
+    });
+
+    if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      currentPositions.forEach((position, key) => {
+        const previous = previousPositions.current.get(key);
+        if (!previous) return;
+        const x = previous.left - position.left;
+        const y = previous.top - position.top;
+        if (Math.abs(x) < 1 && Math.abs(y) < 1) return;
+
+        const card = container.querySelector<HTMLElement>(`[data-hand-card="${key}"]`);
+        card?.animate(
+          [{ transform: `translate(${x}px, ${y}px)` }, { transform: "translate(0, 0)" }],
+          { duration: 260, easing: "cubic-bezier(0.2, 0.8, 0.3, 1)" },
+        );
+      });
+    }
+
+    previousPositions.current = currentPositions;
+  }, [layoutKey]);
+
+  return ref;
+}
+
 export default function Game({ mode, onExit }: { mode: ModeId; onExit: () => void }) {
   useBgm(MODES_BY_ID[mode].bgm);
 
@@ -25,6 +63,8 @@ export default function Game({ mode, onExit }: { mode: ModeId; onExit: () => voi
   const [floats, setFloats] = useState<FloatMoney[]>([]);
   const floatId = useRef(0);
   const { shown, setShown, play: playTimeline } = useRoundTimeline();
+  const dealerHandRef = useHandLayoutAnimation(`${game?.game_id ?? "loading"}:${shown.round}:${shown.dDealt}`);
+  const playerHandRef = useHandLayoutAnimation(`${game?.game_id ?? "loading"}:${shown.round}:${shown.pDealt}`);
 
   function pushFloat(text: string, kind: FloatMoney["kind"], where: FloatMoney["where"]) {
     const id = ++floatId.current;
@@ -183,7 +223,7 @@ export default function Game({ mode, onExit }: { mode: ModeId; onExit: () => voi
             Dealer
             {dealerScore !== null && <span className="score-badge">{dealerScore}</span>}
           </h2>
-          <div className="flex flex-wrap justify-center gap-2" style={{ minHeight: CARD_H }}>
+          <div ref={dealerHandRef} className="flex w-full flex-wrap justify-start gap-2" style={{ minHeight: CARD_H }}>
             {!hasCards && (
               <>
                 <EmptySlot />
@@ -191,12 +231,14 @@ export default function Game({ mode, onExit }: { mode: ModeId; onExit: () => voi
               </>
             )}
             {dealerCards.map((c, i) => (
-              <Card
+              <div
                 key={`${shown.round}-d${i}`}
-                card={c}
-                faceUp={i < shown.dRevealed}
-                glow={glowDealer && i < 2}
-              />
+                data-hand-card={`${shown.round}-d${i}`}
+                className="card-hand-item"
+                style={{ width: CARD_W, height: CARD_H }}
+              >
+                <Card card={c} faceUp={i < shown.dRevealed} glow={glowDealer && i < 2} />
+              </div>
             ))}
           </div>
         </div>
@@ -225,7 +267,7 @@ export default function Game({ mode, onExit }: { mode: ModeId; onExit: () => voi
         </div>
 
         <div className="flex flex-col items-center gap-2">
-          <div className="flex flex-wrap justify-center gap-2" style={{ minHeight: CARD_H }}>
+          <div ref={playerHandRef} className="flex w-full flex-wrap justify-start gap-2" style={{ minHeight: CARD_H }}>
             {!hasCards && (
               <>
                 <EmptySlot />
@@ -233,12 +275,14 @@ export default function Game({ mode, onExit }: { mode: ModeId; onExit: () => voi
               </>
             )}
             {playerCards.map((c, i) => (
-              <Card
+              <div
                 key={`${shown.round}-p${i}`}
-                card={c}
-                faceUp={i < shown.pRevealed}
-                glow={glowPlayer && i < 2}
-              />
+                data-hand-card={`${shown.round}-p${i}`}
+                className="card-hand-item"
+                style={{ width: CARD_W, height: CARD_H }}
+              >
+                <Card card={c} faceUp={i < shown.pRevealed} glow={glowPlayer && i < 2} />
+              </div>
             ))}
           </div>
           <h2 className="hand-title">

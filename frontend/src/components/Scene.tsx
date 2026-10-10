@@ -5,12 +5,12 @@ import { play } from "@/audio/useSound";
 interface BubbleState {
   id: number;
   left: string;
-  top?: string; // only for the initial bobbing bubbles
+  top: string;
   size: number;
   delay: number;
-  duration: number; // seconds, for rising bubbles
-  rising: boolean;
-  popping: boolean;
+  duration: number;
+  phase: "stationary" | "rising" | "parked" | "popping";
+  poppedFrom?: "stationary" | "rising" | "parked";
 }
 
 // Fixed positions (no randomness) so server and client render identically.
@@ -23,7 +23,7 @@ const INITIAL_BUBBLES: BubbleState[] = [
   { left: "88%", top: "28%", size: 40, delay: 2.6 },
   { left: "92%", top: "75%", size: 70, delay: 1.1 },
   { left: "42%", top: "78%", size: 34, delay: 3.4 },
-].map((b, i) => ({ ...b, id: i, duration: 0, rising: false, popping: false }));
+].map((b, i) => ({ ...b, id: i, duration: 0, phase: "stationary" as const }));
 
 export default function Scene({
   children,
@@ -42,26 +42,27 @@ export default function Scene({
     return {
       id: nextId.current++,
       left: `${5 + Math.random() * 90}%`,
+      top: `${10 + Math.random() * 62}%`,
       size: 30 + Math.random() * 90,
       delay: 0,
       duration: 9 + Math.random() * 7,
-      rising: true,
-      popping: false,
+      phase: "rising",
     };
   }
 
   function pop(id: number) {
     if (!interactive) return;
     const target = bubbles.find((b) => b.id === id);
-    if (!target || target.popping) return;
+    if (!target || target.phase === "popping") return;
     play("menu.bubblePop");
-    setBubbles((list) => list.map((b) => (b.id === id ? { ...b, popping: true } : b)));
+    setBubbles((list) => list.map((b) => (b.id === id ? { ...b, phase: "popping", poppedFrom: b.phase } : b)));
   }
 
-  function onAnimationEnd(b: BubbleState) {
-    // A popped bubble is replaced; a bubble that finished rising is recycled.
-    if (b.popping || b.rising) {
+  function onAnimationEnd(b: BubbleState, animationName: string) {
+    if (animationName === "bubble-pop" && b.phase === "popping") {
       setBubbles((list) => list.map((x) => (x.id === b.id ? spawnRising() : x)));
+    } else if (animationName === "bubble-rise" && b.phase === "rising") {
+      setBubbles((list) => list.map((x) => (x.id === b.id ? { ...x, phase: "parked" } : x)));
     }
   }
 
@@ -70,21 +71,27 @@ export default function Scene({
       {bubbles.map((b) => (
         <span
           key={b.id}
-          className={`bubble${interactive ? " interactive" : ""}${b.rising ? " rising" : ""}${b.popping ? " popping" : ""}`}
+          className={`bubble${interactive ? " interactive" : ""}${b.phase === "rising" || (b.phase === "popping" && b.poppedFrom === "rising") ? " rising" : ""}${b.phase !== "rising" && b.poppedFrom !== "rising" ? " bobbing" : ""}`}
           style={{
             left: b.left,
             top: b.top,
             width: b.size,
             height: b.size,
             animationDelay: `${b.delay}s`,
-            ...(b.rising ? { animationDuration: `${b.duration}s` } : null),
+            ...(b.phase === "rising" || (b.phase === "popping" && b.poppedFrom === "rising") ? { animationDuration: `${b.duration}s` } : null),
+          }}
+          onAnimationEnd={(e) => {
+            if (e.target === e.currentTarget) onAnimationEnd(b, e.animationName);
           }}
           onPointerDown={() => pop(b.id)}
-          onAnimationEnd={(e) => {
-            // Ignore bubbling events from the bob animation or children.
-            if (e.target === e.currentTarget && (b.popping || b.rising)) onAnimationEnd(b);
-          }}
-        />
+        >
+          <span
+            className={`bubble-orb${b.phase === "popping" ? " popping" : ""}`}
+            onAnimationEnd={(e) => {
+              if (e.target === e.currentTarget) onAnimationEnd(b, e.animationName);
+            }}
+          />
+        </span>
       ))}
       <div className={`aero-content${interactive ? " passthrough" : ""}`}>{children}</div>
       <MuteToggle />
