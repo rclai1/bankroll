@@ -85,6 +85,21 @@ def _settle(game: Game, result: str) -> None:
         game.bankroll += game.bet_amount
 
 
+def _resolve_round(game: Game) -> None:
+    """Play and settle the dealer hand after the player stands or reaches 21."""
+    while _score(game.dealer_hand) < 17:
+        game.dealer_hand.append(_draw(game))
+
+    player_score = _score(game.player_hand)
+    dealer_score = _score(game.dealer_hand)
+    if dealer_score > 21 or player_score > dealer_score:
+        _settle(game, "win")
+    elif player_score == dealer_score:
+        _settle(game, "push")
+    else:
+        _settle(game, "loss")
+
+
 def _view(game: Game) -> dict:
     reveal_dealer = game.status != "playing"
     return {
@@ -154,8 +169,11 @@ def hit(game_id: str):
     if game.status != "playing":
         raise HTTPException(status_code=409, detail="There is no active round")
     game.player_hand.append(_draw(game))
-    if _score(game.player_hand) > 21:
+    player_score = _score(game.player_hand)
+    if player_score > 21:
         _settle(game, "loss")
+    elif player_score == 21:
+        _resolve_round(game)
     return _view(game)
 
 
@@ -165,14 +183,5 @@ def stand(game_id: str):
     game = _get_game(game_id)
     if game.status != "playing":
         raise HTTPException(status_code=409, detail="There is no active round")
-    while _score(game.dealer_hand) < 17:
-        game.dealer_hand.append(_draw(game))
-    player_score = _score(game.player_hand)
-    dealer_score = _score(game.dealer_hand)
-    if dealer_score > 21 or player_score > dealer_score:
-        _settle(game, "win")
-    elif player_score == dealer_score:
-        _settle(game, "push")
-    else:
-        _settle(game, "loss")
+    _resolve_round(game)
     return _view(game)
