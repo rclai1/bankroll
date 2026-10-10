@@ -78,9 +78,9 @@ def _settle(game: Game, result: str) -> None:
     game.status = "finished"
     game.result = result
     if result == "win":
-        game.bankroll += game.bet_amount
+        game.bankroll += game.bet_amount * 2
     elif result == "blackjack":
-        game.bankroll += game.bet_amount * 1.5
+        game.bankroll += game.bet_amount * 2.5
     elif result == "push":
         game.bankroll += game.bet_amount
 
