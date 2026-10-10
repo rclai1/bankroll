@@ -1,6 +1,6 @@
 import type { CSSProperties } from "react";
-import facesSheet from "@/assets/standard/PC _ Computer - Balatro - Playing Cards - Playing Cards.png";
-import backsSheet from "@/assets/special/PC _ Computer - Balatro - Playing Cards - Card Backs, Enhancers and Seals.png";
+import facesSheet from "@/assets/standard/balatro_std_faces.png";
+import cardSheet from "@/assets/cards/balatro_cards.png";
 
 const RANKS = ["2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A"];
 const SUITS = ["hearts", "clubs", "diamonds", "spades"];
@@ -61,7 +61,7 @@ export default function Card({
           aria-label={faceUp && card ? card : "Face-down card"}
           style={front}
         />
-        <div className="card-face card-back" aria-hidden style={spriteStyle(backsSheet, 0, 0)} />
+        <div className="card-face card-back" aria-hidden style={spriteStyle(cardSheet, 0, 0)} />
       </div>
     </div>
   );
