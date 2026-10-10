@@ -1,6 +1,8 @@
 """Database-backed API for users and the leaderboard."""
 
 import os
+import secrets
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -8,6 +10,8 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import (
     Column,
+    BigInteger,
+    DateTime,
     Float,
     ForeignKey,
     Integer,
@@ -28,7 +32,7 @@ if not connection:
 
 # SQLAlchemy's PostgreSQL dialect uses ``postgresql://`` (the older
 # ``postgres://`` spelling is still accepted in local environment files).
-connection_url = connection.replace("postgres://", "postgresql://", 1)
+connection_url = connection
 engine = create_engine(connection_url, pool_pre_ping=True)
 
 metadata = MetaData()
@@ -45,6 +49,13 @@ high_scores = Table(
     Column("user_id", Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
     Column("score", Float, nullable=False),
     UniqueConstraint("user_id", name="uq_high_scores_user_id"),
+)
+seed_table = Table(
+    "seeds",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    Column("seed", BigInteger, nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
 )
 
 app = FastAPI(title="Bankroll API", version="1.0.0")
@@ -63,6 +74,45 @@ class CreateHighScoreRequest(BaseModel):
 def create_tables() -> None:
     """Create the API tables if this is a fresh database."""
     metadata.create_all(engine)
+
+
+def _current_seed_reset(now: datetime) -> datetime:
+    """Return the current daily reset boundary in UTC."""
+    reset = now.astimezone(timezone.utc).replace(
+        hour=3, minute=0, second=0, microsecond=0
+    )
+    if now.astimezone(timezone.utc) < reset:
+        reset -= timedelta(days=1)
+    return reset
+
+
+@app.get("/seed")
+def get_seed():
+    """Return the singleton seed for the current UTC day starting at 03:00."""
+    now = datetime.now(timezone.utc)
+    reset_at = _current_seed_reset(now)
+    with engine.begin() as connection:
+        result = connection.execute(
+            text(
+                """INSERT INTO seeds (id, seed, created_at)
+                   VALUES (1, :seed, :created_at)
+                   ON CONFLICT (id) DO UPDATE
+                   SET seed = EXCLUDED.seed, created_at = EXCLUDED.created_at
+                   WHERE seeds.created_at < :reset_at
+                   RETURNING seed, created_at"""
+            ),
+            {
+                "seed": secrets.randbits(63),
+                "created_at": reset_at,
+                "reset_at": reset_at,
+            },
+        )
+        row = result.mappings().one_or_none()
+        if row is None:
+            row = connection.execute(
+                text("SELECT seed, created_at FROM seeds WHERE id = 1")
+            ).mappings().one()
+        return dict(row)
 
 
 @app.post("/users", status_code=201)
