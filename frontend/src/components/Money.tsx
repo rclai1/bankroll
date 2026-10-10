@@ -55,6 +55,8 @@ export interface FloatMoney {
   id: number;
   text: string;
   kind: "win" | "loss";
+  /** Which popup area shows it: the bankroll panel or the table. */
+  where: "bank" | "table";
   delay: number;
 }
 

@@ -267,7 +267,7 @@ body {
   height: 100%;
   transform-style: preserve-3d;
   transition: transform 0.6s cubic-bezier(0.3, 0.7, 0.2, 1);
-  transition-delay: 0.1s;
+  transition-delay: 0s;
 }
 
 .card-flipper.is-down {
@@ -448,6 +448,147 @@ body {
 @keyframes fade-in {
   from { opacity: 0; transform: translateY(10px); }
   to { opacity: 1; transform: none; }
+}
+
+/* ---------- Interactive bubbles (main menu) ---------- */
+/* Content ignores the pointer so clicks reach the bubbles behind it, except real controls. */
+.passthrough {
+  pointer-events: none;
+}
+
+.passthrough .glass,
+.passthrough button,
+.passthrough a,
+.passthrough input {
+  pointer-events: auto;
+}
+
+.bubble.interactive {
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.bubble.rising {
+  top: auto;
+  bottom: -160px;
+  animation: bubble-rise 12s linear forwards;
+}
+
+.bubble.popping {
+  pointer-events: none;
+  animation: bubble-pop 0.28s ease-out forwards;
+}
+
+@keyframes bubble-rise {
+  0% { transform: translate(0, 0); }
+  25% { transform: translate(18px, -30vh); }
+  50% { transform: translate(-14px, -62vh); }
+  75% { transform: translate(14px, -94vh); }
+  100% { transform: translate(0, -135vh); }
+}
+
+@keyframes bubble-pop {
+  0% { transform: scale(1); opacity: 1; }
+  40% { transform: scale(1.25); opacity: 0.95; }
+  100% { transform: scale(1.6); opacity: 0; }
+}
+
+/* ---------- Mode buttons & mute toggle ---------- */
+.mode-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
+  width: 100%;
+}
+
+.mode-tag {
+  padding: 0.05rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  background: rgba(255, 255, 255, 0.55);
+  color: var(--ink);
+  text-shadow: none;
+}
+
+.mute-toggle {
+  position: fixed;
+  right: 1rem;
+  bottom: 1rem;
+  z-index: 10;
+  padding: 0.5rem 0.8rem;
+}
+
+/* ---------- Natural blackjack emphasis ---------- */
+.result-subtitle {
+  font-weight: 700;
+  color: #fff;
+  text-shadow: 0 1px 0 rgba(10, 100, 170, 0.6), 0 2px 8px rgba(10, 100, 170, 0.5);
+}
+
+.result-banner.natural {
+  position: relative;
+  overflow: hidden;
+  padding: 0.5rem 3rem;
+  font-size: 2.6rem;
+  background: linear-gradient(180deg, #fff3a8, #ffc21f 50%, #f09000 51%, #ffd75a);
+  text-shadow: 0 2px 3px rgba(130, 70, 0, 0.7);
+  box-shadow: 0 0 40px rgba(255, 210, 60, 0.95), 0 8px 24px rgba(150, 90, 0, 0.5);
+  animation:
+    banner-pop 0.6s cubic-bezier(0.3, 1.5, 0.5, 1) backwards,
+    natural-pulse 0.9s ease-in-out 0.6s 3;
+}
+
+.result-banner.natural.loss {
+  background: linear-gradient(180deg, #ffc1aa, #e5481f 50%, #c93408 51%, #ff7b55);
+  box-shadow: 0 0 40px rgba(255, 90, 50, 0.9), 0 8px 24px rgba(120, 30, 10, 0.5);
+}
+
+.result-banner.natural.push {
+  background: linear-gradient(180deg, #b8ecff, #1a9ee0 50%, #0b7fc2 51%, #52c6f5);
+  box-shadow: 0 0 40px rgba(80, 200, 255, 0.95), 0 8px 24px rgba(10, 100, 170, 0.5);
+}
+
+.result-banner.natural::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -60%;
+  width: 40%;
+  background: linear-gradient(100deg, transparent, rgba(255, 255, 255, 0.85), transparent);
+  animation: shine 1.2s ease-in-out 0.5s 2;
+}
+
+@keyframes shine {
+  to { left: 130%; }
+}
+
+@keyframes natural-pulse {
+  50% { transform: scale(1.08); }
+}
+
+.natural-flash {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  pointer-events: none;
+  background: radial-gradient(circle, rgba(255, 245, 170, 0.9), rgba(255, 200, 60, 0.35) 60%, transparent 80%);
+  animation: flash 1s ease-out forwards;
+}
+
+@keyframes flash {
+  0% { opacity: 0; }
+  15% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+.card-glow .card-face {
+  animation: card-glow 1s ease-in-out 3;
+}
+
+@keyframes card-glow {
+  50% { box-shadow: 0 0 28px 8px rgba(255, 214, 70, 0.95); }
 }
 
 @media (prefers-reduced-motion: reduce) {

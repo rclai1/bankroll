@@ -31,11 +31,19 @@ export function EmptySlot() {
 }
 
 /**
- * A card that slides in when mounted (after `delay` seconds). With no `card`
- * it shows the back; when `card` is later provided on the same element it
- * flips face-up.
+ * A card that slides in (face-down) when it mounts and flips face-up when
+ * `faceUp` becomes true. `card` may be undefined while the face is still
+ * unknown to the client (the dealer's hole card).
  */
-export default function Card({ card, delay = 0 }: { card?: string; delay?: number }) {
+export default function Card({
+  card,
+  faceUp,
+  glow = false,
+}: {
+  card?: string;
+  faceUp: boolean;
+  glow?: boolean;
+}) {
   const [rank, , suit] = card ? card.split(" ") : [];
   const front = card
     ? spriteStyle(facesSheet, RANKS.indexOf(rank), SUITS.indexOf(suit))
@@ -43,21 +51,17 @@ export default function Card({ card, delay = 0 }: { card?: string; delay?: numbe
 
   return (
     <div
-      className="card-slot deal-in"
-      style={{ width: CARD_W, height: CARD_H, animationDelay: `${delay}s` }}
+      className={`card-slot deal-in${glow ? " card-glow" : ""}`}
+      style={{ width: CARD_W, height: CARD_H }}
     >
-      <div className={`card-flipper${card ? "" : " is-down"}`}>
+      <div className={`card-flipper${faceUp ? "" : " is-down"}`}>
         <div
           className="card-face card-front"
           role="img"
-          aria-label={card ?? "Face-down card"}
+          aria-label={faceUp && card ? card : "Face-down card"}
           style={front}
         />
-        <div
-          className="card-face card-back"
-          aria-hidden
-          style={spriteStyle(backsSheet, 0, 0)}
-        />
+        <div className="card-face card-back" aria-hidden style={spriteStyle(backsSheet, 0, 0)} />
       </div>
     </div>
   );

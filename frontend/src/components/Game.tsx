@@ -1,70 +1,90 @@
 import { useEffect, useRef, useState } from "react";
 import Card, { CARD_H, EmptySlot } from "./Card";
 import { AnimatedMoney, FloatingMoney, formatMoney, type FloatMoney } from "./Money";
-import {
-  createGame,
-  hit,
-  placeBet,
-  stand,
-  type GameResult,
-  type GameView,
-} from "@/lib/blackjackApi";
-
-const RESULT_TEXT: Record<NonNullable<GameResult>, string> = {
-  win: "You win!",
-  blackjack: "Blackjack!",
-  push: "Push",
-  loss: "You lose",
-};
-
-// Seconds before each card of the opening deal slides in (player, dealer, player, dealer).
-const PLAYER_DEAL_DELAY = [0, 0.5];
-const DEALER_DEAL_DELAY = [0.25, 0.75];
+import { createGame, hit, placeBet, stand, type GameView } from "@/lib/blackjackApi";
+import { score } from "@/lib/scoring";
+import { betSteps, hitSteps, standSteps, type StepApi } from "@/lib/roundSteps";
+import { INITIAL_SHOWN, useRoundTimeline } from "@/hooks/useRoundTimeline";
+import { TIMING } from "@/config/timing";
+import { ROUND_EVENTS, getRoundEvent } from "@/config/messages";
+import { MODES_BY_ID, type ModeId } from "@/config/modes";
+import { play, useBgm } from "@/audio/useSound";
+import { selectDealSound, selectHitSound } from "@/audio/soundConfig";
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
-export default function Game({ onExit }: { onExit: () => void }) {
+export default function Game({ mode, onExit }: { mode: ModeId; onExit: () => void }) {
+  useBgm(MODES_BY_ID[mode].bgm);
+
   const [game, setGame] = useState<GameView | null>(null);
   const [bet, setBet] = useState(10);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // False after a round finishes until the player clicks "Next round".
   const [betting, setBetting] = useState(true);
-  // Incremented per deal so each round's cards remount (and animate in again).
-  const [round, setRound] = useState(0);
-  // ms to wait after a response before showing the outcome (lets cards finish).
-  const [settleDelay, setSettleDelay] = useState(0);
   const [floats, setFloats] = useState<FloatMoney[]>([]);
   const floatId = useRef(0);
+  const { shown, setShown, play: playTimeline } = useRoundTimeline();
 
-  function pushFloat(text: string, kind: FloatMoney["kind"], delay: number) {
+  function pushFloat(text: string, kind: FloatMoney["kind"], where: FloatMoney["where"]) {
     const id = ++floatId.current;
-    setFloats((f) => [...f, { id, text, kind, delay }]);
-    setTimeout(() => setFloats((f) => f.filter((x) => x.id !== id)), delay + 1800);
+    setFloats((f) => [...f, { id, text, kind, where, delay: 0 }]);
+    setTimeout(() => setFloats((f) => f.filter((x) => x.id !== id)), 1800);
   }
 
-  function announce(before: number, next: GameView, betAmount?: number) {
-    const afterBet = betAmount ? round2(before - betAmount) : before;
-    const delay = next.dealer_hand.length > 2 ? 1500 : next.status === "finished" ? 1000 : 0;
-    setSettleDelay(next.status === "finished" ? delay : 0);
+  /** Runs when the timeline finishes: payout, result sound. */
+  function settleRound(view: GameView, afterBet: number) {
+    setShown((s) => ({ ...s, bankroll: view.bankroll, settled: true, phase: "settled" }));
+    const gain = round2(view.bankroll - afterBet);
+    if (gain > 0) pushFloat(`+${formatMoney(gain)}`, "win", "bank");
+    else if (view.result === "loss") pushFloat(`-${formatMoney(view.bet_amount)}`, "loss", "table");
 
-    if (betAmount) pushFloat(`-${formatMoney(betAmount)}`, "loss", 0);
-    if (next.status === "finished") {
-      const gain = round2(next.bankroll - afterBet);
-      if (gain > 0) pushFloat(`+${formatMoney(gain)}`, "win", delay);
-      else if (next.result === "loss") pushFloat(`-${formatMoney(next.bet_amount)}`, "loss", delay);
-    }
+    const sfx = ROUND_EVENTS[getRoundEvent(view)].sfx;
+    if (sfx) play(sfx);
   }
 
-  async function run(action: () => Promise<GameView>, betAmount?: number) {
+  async function run(kind: "bet" | "hit" | "stand", amount = 0) {
+    if (!game) return;
     setBusy(true);
     setError(null);
     try {
-      const next = await action();
-      if (betAmount) setRound((r) => r + 1);
-      announce(game?.bankroll ?? 0, next, betAmount);
+      const next =
+        kind === "bet"
+          ? await placeBet(game.game_id, amount)
+          : kind === "hit"
+            ? await hit(game.game_id)
+            : await stand(game.game_id);
+
+      // The bet is taken from the bankroll at deal time; hit/stand see it already gone.
+      const afterBet = kind === "bet" ? round2(game.bankroll - amount) : game.bankroll;
+      const api: StepApi = {
+        set: (patch) => setShown((s) => ({ ...s, ...patch })),
+        sfx: play,
+        settle: () => settleRound(next, afterBet),
+      };
+
       setGame(next);
-      if (betAmount) setBetting(false);
+      if (kind === "bet") {
+        setBetting(false);
+        // Reset what is visible and show the money leaving first; cards follow.
+        setShown((s) => ({
+          ...s,
+          round: s.round + 1,
+          phase: "withdrawing",
+          pDealt: 0,
+          pRevealed: 0,
+          dDealt: 0,
+          dRevealed: 0,
+          settled: false,
+          bet: amount,
+          bankroll: afterBet,
+        }));
+        pushFloat(`-${formatMoney(amount)}`, "loss", "bank");
+        play("money.withdraw");
+        playTimeline(betSteps(next, api));
+      } else {
+        playTimeline((kind === "hit" ? hitSteps : standSteps)(next, api));
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Something went wrong");
     } finally {
@@ -72,11 +92,23 @@ export default function Game({ onExit }: { onExit: () => void }) {
     }
   }
 
+  function startNewGame() {
+    setBetting(true);
+    createGame()
+      .then((g) => {
+        setGame(g);
+        setShown((s) => ({ ...INITIAL_SHOWN, round: s.round, bankroll: g.bankroll }));
+      })
+      .catch((e) => setError(e instanceof Error ? e.message : "Could not reach the server"));
+  }
+
   useEffect(() => {
     let cancelled = false;
     createGame()
       .then((g) => {
-        if (!cancelled) setGame(g);
+        if (cancelled) return;
+        setGame(g);
+        setShown((s) => ({ ...s, bankroll: g.bankroll }));
       })
       .catch((e) => {
         if (!cancelled) setError(e instanceof Error ? e.message : "Could not reach the server");
@@ -84,7 +116,7 @@ export default function Game({ onExit }: { onExit: () => void }) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [setShown]);
 
   if (!game) {
     return (
@@ -101,31 +133,44 @@ export default function Game({ onExit }: { onExit: () => void }) {
     );
   }
 
-  const showBetForm = game.status !== "playing" && betting;
-  const dealerRevealed = game.status !== "playing";
+  const idleOrSettled = shown.phase === "idle" || shown.phase === "settled";
+  const showBetForm = betting && game.status !== "playing" && idleOrSettled;
   const broke = game.bankroll <= 0;
-  const hasCards = game.player_hand.length > 0;
-  // While playing the API only sends the up card; show the hole card face-down.
-  // Keeping it in the same array keeps the element stable so it flips on reveal.
-  const dealerCards: (string | undefined)[] =
-    game.status === "playing" ? [...game.dealer_hand, undefined] : game.dealer_hand;
-  const outcome = game.status === "finished" ? game.result : null;
-  const chipClass = outcome === "loss" ? "loss" : outcome === "push" ? "push" : "win";
+  const hasCards = shown.pDealt > 0 || shown.dDealt > 0;
+
+  // Only flipped cards count towards the displayed totals.
+  const playerScore = shown.pRevealed > 0 ? score(game.player_hand.slice(0, shown.pRevealed)) : null;
+  const dealerScore = shown.dRevealed > 0 ? score(game.dealer_hand.slice(0, shown.dRevealed)) : null;
+
+  const playerCards = game.player_hand.slice(0, shown.pDealt);
+  // The hole card is unknown to the client until the round ends (undefined entry).
+  const dealerCards = Array.from({ length: shown.dDealt }, (_, i) => game.dealer_hand[i]);
+
+  const settledKey = shown.settled && game.status === "finished" ? getRoundEvent(game) : null;
+  const chipOutcome = settledKey ? ROUND_EVENTS[settledKey].tone === "loss" ? "loss" : ROUND_EVENTS[settledKey].tone === "push" ? "push" : "win" : "";
+  // The banner and effects clear once the player moves on to the next round.
+  const eventKey = betting ? null : settledKey;
+  const event = eventKey ? ROUND_EVENTS[eventKey] : null;
+  const natural = event?.effect === "natural";
+  const glowPlayer = natural && (eventKey === "playerNatural" || eventKey === "bothNatural");
+  const glowDealer = natural && (eventKey === "dealerNatural" || eventKey === "bothNatural");
 
   return (
     <main className="flex min-h-screen flex-col items-center gap-6 px-4 py-6">
+      {natural && <div key={`flash-${shown.round}`} className="natural-flash" />}
+
       <header className="flex w-full max-w-4xl items-stretch gap-3">
         <div className="glass relative flex flex-1 flex-col px-5 py-3">
           <span className="label">Bankroll</span>
           <span>
             <span className="coin" />
-            <AnimatedMoney value={game.bankroll} delay={game.status === "finished" ? settleDelay : 0} />
+            <AnimatedMoney value={shown.bankroll} duration={TIMING.MONEY_TWEEN_MS} />
           </span>
-          <FloatingMoney items={floats.filter((f) => f.kind === "win" || f.delay === 0)} />
+          <FloatingMoney items={floats.filter((f) => f.where === "bank")} />
         </div>
         <div className="glass flex flex-col px-5 py-3">
           <span className="label">Bet</span>
-          <span className="money">{formatMoney(game.bet_amount)}</span>
+          <span className="money">{formatMoney(shown.bet)}</span>
         </div>
         <button className="btn btn-orange self-center" onClick={onExit}>
           Menu
@@ -136,9 +181,7 @@ export default function Game({ onExit }: { onExit: () => void }) {
         <div className="flex flex-col items-center gap-2">
           <h2 className="hand-title">
             Dealer
-            {dealerRevealed && game.dealer_score !== null && (
-              <span className="score-badge">{game.dealer_score}</span>
-            )}
+            {dealerScore !== null && <span className="score-badge">{dealerScore}</span>}
           </h2>
           <div className="flex flex-wrap justify-center gap-2" style={{ minHeight: CARD_H }}>
             {!hasCards && (
@@ -149,34 +192,36 @@ export default function Game({ onExit }: { onExit: () => void }) {
             )}
             {dealerCards.map((c, i) => (
               <Card
-                key={`${round}-d${i}`}
+                key={`${shown.round}-d${i}`}
                 card={c}
-                delay={i < 2 ? DEALER_DEAL_DELAY[i] : 0.9 + (i - 2) * 0.5}
+                faceUp={i < shown.dRevealed}
+                glow={glowDealer && i < 2}
               />
             ))}
           </div>
         </div>
 
-        <div className="relative flex h-20 items-center justify-center">
-          {hasCards && !broke && (
+        <div className="relative flex h-24 items-center justify-center">
+          {shown.round > 0 && (
             <div
-              key={round}
-              className={`chip-wrap ${outcome ? chipClass : ""}`}
-              style={outcome ? { animationDelay: `${settleDelay}ms` } : undefined}
+              key={shown.round}
+              className={`chip-wrap ${chipOutcome}`}
             >
-              <div className="chip">${game.bet_amount}</div>
+              <div className="chip">${shown.bet}</div>
             </div>
           )}
-          {outcome && (
+          {event && (
             <div
-              key={`result-${round}`}
-              className={`result-banner ${outcome} absolute`}
-              style={{ animationDelay: `${settleDelay}ms` }}
+              key={`result-${shown.round}`}
+              className="absolute flex flex-col items-center gap-1"
             >
-              {RESULT_TEXT[outcome]}
+              <div className={`result-banner ${event.tone}${natural ? " natural" : ""}`}>
+                {event.banner}
+              </div>
+              {event.subtitle && <div className="result-subtitle">{event.subtitle}</div>}
             </div>
           )}
-          <FloatingMoney items={floats.filter((f) => f.kind === "loss" && f.delay > 0)} />
+          <FloatingMoney items={floats.filter((f) => f.where === "table")} />
         </div>
 
         <div className="flex flex-col items-center gap-2">
@@ -187,52 +232,75 @@ export default function Game({ onExit }: { onExit: () => void }) {
                 <EmptySlot />
               </>
             )}
-            {game.player_hand.map((c, i) => (
+            {playerCards.map((c, i) => (
               <Card
-                key={`${round}-p${i}`}
+                key={`${shown.round}-p${i}`}
                 card={c}
-                delay={i < 2 ? PLAYER_DEAL_DELAY[i] : 0}
+                faceUp={i < shown.pRevealed}
+                glow={glowPlayer && i < 2}
               />
             ))}
           </div>
           <h2 className="hand-title">
             You
-            {hasCards && <span className="score-badge">{game.player_score}</span>}
+            {playerScore !== null && <span className="score-badge">{playerScore}</span>}
           </h2>
         </div>
       </section>
 
       <div className="flex min-h-16 flex-col items-center gap-3">
-        {game.status === "playing" && (
+        {game.status === "playing" && shown.phase === "player" && (
           <div className="fade-in flex gap-3">
-            <button className="btn btn-green" disabled={busy} onClick={() => run(() => hit(game.game_id))}>
+            <button
+              className="btn btn-green"
+              disabled={busy}
+              onClick={() => {
+                play(
+                  selectHitSound({
+                    bet: game.bet_amount,
+                    bankrollBeforeBet: game.bankroll + game.bet_amount,
+                    playerScore: game.player_score,
+                  }),
+                );
+                run("hit");
+              }}
+            >
               Hit
             </button>
-            <button className="btn btn-orange" disabled={busy} onClick={() => run(() => stand(game.game_id))}>
+            <button
+              className="btn btn-orange"
+              disabled={busy}
+              onClick={() => {
+                play("stand");
+                run("stand");
+              }}
+            >
               Stand
             </button>
           </div>
         )}
 
-        {game.status === "finished" && !betting && (
-          <div
-            className="fade-in flex gap-3"
-            style={{ animationDelay: `${settleDelay}ms` }}
-          >
+        {game.status === "finished" && shown.settled && !betting && (
+          <div className="fade-in flex gap-3">
             {broke ? (
               <button
                 className="btn btn-green"
                 disabled={busy}
                 onClick={() => {
-                  setBetting(true);
-                  setSettleDelay(0);
-                  run(() => createGame());
+                  play("nextRound");
+                  startNewGame();
                 }}
               >
                 Out of money, new game
               </button>
             ) : (
-              <button className="btn btn-green" onClick={() => setBetting(true)}>
+              <button
+                className="btn btn-green"
+                onClick={() => {
+                  play("nextRound");
+                  setBetting(true);
+                }}
+              >
                 Next round
               </button>
             )}
@@ -244,7 +312,8 @@ export default function Game({ onExit }: { onExit: () => void }) {
             className="fade-in glass flex items-center gap-3 px-5 py-3"
             onSubmit={(e) => {
               e.preventDefault();
-              run(() => placeBet(game.game_id, bet), bet);
+              play(selectDealSound(bet, game.bankroll));
+              run("bet", bet);
             }}
           >
             <label className="flex items-center gap-2 font-bold">
