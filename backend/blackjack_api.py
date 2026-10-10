@@ -1,8 +1,4 @@
-"""Small in-memory blackjack API built with FastAPI.
-
-Run with ``uvicorn blackjack_api:app --reload``. Each game is identified by a
-game_id returned from ``POST /games``. Use persistent storage for multiple workers.
-"""
+"""Blackjack routes and in-memory game state."""
 
 from __future__ import annotations
 
@@ -13,10 +9,10 @@ from typing import Literal
 
 import os
 
-from fastapi import FastAPI, HTTPException
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-app = FastAPI(title="Blackjack API", version="1.0.0")
+router = APIRouter()
 RANKS = ("2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A")
 SUITS = ("clubs", "diamonds", "hearts", "spades")
 
@@ -127,7 +123,7 @@ def _get_game(game_id: str) -> Game:
     return game
 
 
-@app.post("/games", status_code=201)
+@router.post("/games", status_code=201)
 def create_game(request: NewGameRequest = NewGameRequest()):
     """Create a session with a starting bankroll (defaults to $100)."""
     game_id = str(uuid.uuid4())
@@ -136,12 +132,12 @@ def create_game(request: NewGameRequest = NewGameRequest()):
     return _view(game)
 
 
-@app.get("/games/{game_id}")
+@router.get("/games/{game_id}")
 def get_game(game_id: str):
     return _view(_get_game(game_id))
 
 
-@app.post("/games/{game_id}/bet")
+@router.post("/games/{game_id}/bet")
 def bet(game_id: str, request: BetRequest):
     """Place a bet and deal; a natural blackjack pays 3:2."""
     game = _get_game(game_id)
@@ -167,7 +163,7 @@ def bet(game_id: str, request: BetRequest):
     return _view(game)
 
 
-@app.post("/games/{game_id}/hit")
+@router.post("/games/{game_id}/hit")
 def hit(game_id: str):
     """Draw one card for the player."""
     game = _get_game(game_id)
@@ -182,7 +178,7 @@ def hit(game_id: str):
     return _view(game)
 
 
-@app.post("/games/{game_id}/stand")
+@router.post("/games/{game_id}/stand")
 def stand(game_id: str):
     """Stand, play the dealer hand to 17, and settle the round."""
     game = _get_game(game_id)

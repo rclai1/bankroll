@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import (
     Column,
@@ -23,7 +23,6 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.exc import IntegrityError
-
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 connection = os.getenv("CONNECTION")
@@ -58,7 +57,7 @@ seed_table = Table(
     Column("created_at", DateTime(timezone=True), nullable=False),
 )
 
-app = FastAPI(title="Bankroll API", version="1.0.0")
+router = APIRouter()
 
 
 class CreateUserRequest(BaseModel):
@@ -70,7 +69,6 @@ class CreateHighScoreRequest(BaseModel):
     score: float = Field(ge=0, allow_inf_nan=False)
 
 
-@app.on_event("startup")
 def create_tables() -> None:
     """Create the API tables if this is a fresh database."""
     metadata.create_all(engine)
@@ -86,7 +84,7 @@ def _current_seed_reset(now: datetime) -> datetime:
     return reset
 
 
-@app.get("/seed")
+@router.get("/seed")
 def get_seed():
     """Return the singleton seed for the current UTC day starting at 03:00."""
     now = datetime.now(timezone.utc)
@@ -115,7 +113,7 @@ def get_seed():
         return dict(row)
 
 
-@app.post("/users", status_code=201)
+@router.post("/users", status_code=201)
 def create_user(request: CreateUserRequest):
     """Create a user with a unique username."""
     try:
@@ -128,7 +126,7 @@ def create_user(request: CreateUserRequest):
         raise HTTPException(status_code=409, detail="Username already exists") from exc
 
 
-@app.post("/high_scores", status_code=201)
+@router.post("/high_scores", status_code=201)
 def create_high_score(request: CreateHighScoreRequest):
     """Create or replace this user's single high score."""
     with engine.begin() as connection:
@@ -152,7 +150,7 @@ def create_high_score(request: CreateHighScoreRequest):
         return dict(result.mappings().one())
 
 
-@app.get("/high_scores")
+@router.get("/high_scores")
 def list_high_scores():
     """Return scores from highest to lowest, with their usernames."""
     with engine.connect() as connection:
