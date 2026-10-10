@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import random
 import uuid
+import json
 from dataclasses import dataclass, field
 from typing import Literal
 
 import os
 
+from google import genai
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
+from strategy import recommend_move
 
 router = APIRouter()
 RANKS = ("2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A")
@@ -38,6 +41,15 @@ class NewGameRequest(BaseModel):
 
 class BetRequest(BaseModel):
     amount: float = Field(gt=0, le=1_000_000)
+
+
+class EVExplanationRequest(BaseModel):
+    player_hand: list[str]
+    dealer_upcard: str
+    player_total: int
+    bet_amount: float
+    bankroll: float
+    advice: dict[str, float | str]
 
 
 def _new_deck() -> list[str]:
@@ -135,6 +147,55 @@ def create_game(request: NewGameRequest = NewGameRequest()):
 @router.get("/games/{game_id}")
 def get_game(game_id: str):
     return _view(_get_game(game_id))
+
+
+@router.get("/games/{game_id}/advice")
+def get_game_advice(game_id: str):
+    """Return the best hit/stand choice and net EVs for the current hand."""
+    game = _get_game(game_id)
+    if game.status != "playing" or len(game.dealer_hand) < 2:
+        raise HTTPException(status_code=409, detail="Advice is available during the player's turn")
+
+    advice = recommend_move(game.player_hand, game.dealer_hand[0], game.bet_amount)
+    return {**advice, "bet_amount": round(game.bet_amount, 2)}
+
+
+@router.post("/explain-ev")
+def explain_ev(request: EVExplanationRequest):
+    """Ask Gemini to explain the game's EV values using the current visible state."""
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        raise HTTPException(
+            status_code=503,
+            detail="Gemini is not configured. Set GEMINI_API_KEY in the environment and restart the backend.",
+        )
+
+    prompt = (
+        "Explain this blackjack expected-value calculation for a curious average player, in plain language. "
+        "Use the supplied facts accurately and do not recalculate or invent probabilities. Explain EV as a "
+        "long-run average over repeated hands, that positive/negative values are net dollars relative to the "
+        "already-placed bet, compare both choices, and say which is higher. Explain the actual method: exact "
+        "enumeration for a single 52-card deck (2-9 four each, 10/J/Q/K sixteen total, aces four), accounting "
+        "for visible player cards and dealer upcard, averaging over possible hidden dealer cards, dealer draws "
+        "to at least 17, and for Hit considering each possible next card then the better of Hit/Stand from that "
+        "resulting state. The calculation conditions the hidden-card possibilities on the fact this hand is "
+        "still active (dealer did not start with blackjack). State that EV is not a prediction of this one hand "
+        "and assumes this game's hit/stand rules; suits do not affect values. Keep it concise and accessible.\n\n"
+        f"Current hand facts: {json.dumps(request.dict())}"
+    )
+    try:
+        client = genai.Client()
+        interaction = client.interactions.create(
+            model="gemini-3.8-flash",
+            input=prompt,
+        )
+        explanation = interaction.output_text.strip()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="Gemini could not explain this calculation. Please try again.") from exc
+
+    if not explanation:
+        raise HTTPException(status_code=502, detail="Gemini returned an empty explanation. Please try again.")
+    return {"explanation": explanation}
 
 
 @router.post("/games/{game_id}/bet")

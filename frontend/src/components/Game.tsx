@@ -1,7 +1,8 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import Card, { CARD_H, CARD_W, EmptySlot } from "./Card";
 import { AnimatedMoney, FloatingMoney, formatMoney, type FloatMoney } from "./Money";
-import { createGame, hit, placeBet, stand, type GameView } from "@/lib/blackjackApi";
+import { createGame, getLearningAdvice, hit, placeBet, stand, type GameView, type LearningAdvice } from "@/lib/blackjackApi";
 import { score } from "@/lib/scoring";
 import { betSteps, hitSteps, standSteps, type StepApi } from "@/lib/roundSteps";
 import { INITIAL_SHOWN, useRoundTimeline } from "@/hooks/useRoundTimeline";
@@ -12,6 +13,7 @@ import { play, useBgm } from "@/audio/useSound";
 import { selectDealSound, selectHitSound } from "@/audio/soundConfig";
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
+const LEARNING_INTRO_STORAGE_KEY = "learning-mode-intro-seen-v2";
 
 function useHandLayoutAnimation(layoutKey: string) {
   const ref = useRef<HTMLDivElement>(null);
@@ -61,10 +63,67 @@ export default function Game({ mode, onExit }: { mode: ModeId; onExit: () => voi
   // False after a round finishes until the player clicks "Next round".
   const [betting, setBetting] = useState(true);
   const [floats, setFloats] = useState<FloatMoney[]>([]);
+  const [adviceState, setAdviceState] = useState<{
+    key: string;
+    advice?: LearningAdvice;
+    error?: string;
+  } | null>(null);
+  const [showLearningIntro, setShowLearningIntro] = useState(false);
+  const [showEVExplanation, setShowEVExplanation] = useState(false);
+  const [evExplanation, setEVExplanation] = useState<string | null>(null);
+  const [evExplanationError, setEVExplanationError] = useState<string | null>(null);
+  const [loadingEVExplanation, setLoadingEVExplanation] = useState(false);
   const floatId = useRef(0);
   const { shown, setShown, play: playTimeline } = useRoundTimeline();
   const dealerHandRef = useHandLayoutAnimation(`${game?.game_id ?? "loading"}:${shown.round}:${shown.dDealt}`);
   const playerHandRef = useHandLayoutAnimation(`${game?.game_id ?? "loading"}:${shown.round}:${shown.pDealt}`);
+
+  useEffect(() => {
+    if (mode !== "learning") return;
+    try {
+      setShowLearningIntro(window.localStorage.getItem(LEARNING_INTRO_STORAGE_KEY) !== "1");
+    } catch {
+      setShowLearningIntro(true);
+    }
+  }, [mode]);
+
+  function dismissLearningIntro() {
+    try {
+      window.localStorage.setItem(LEARNING_INTRO_STORAGE_KEY, "1");
+    } catch {
+      // Keep the introduction dismissible if browser storage is unavailable.
+    }
+    setShowLearningIntro(false);
+  }
+
+  async function explainEV() {
+    if (!game || !advice) return;
+    setShowEVExplanation(true);
+    setEVExplanation(null);
+    setEVExplanationError(null);
+    setLoadingEVExplanation(true);
+    try {
+      const response = await fetch("/api/blackjack/explain-ev", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          player_hand: game.player_hand,
+          dealer_upcard: game.dealer_hand[0],
+          player_total: game.player_score,
+          bet_amount: game.bet_amount,
+          bankroll: game.bankroll,
+          advice,
+        }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error ?? "Could not get an explanation.");
+      setEVExplanation(data.explanation);
+    } catch (e) {
+      setEVExplanationError(e instanceof Error ? e.message : "Could not get an explanation.");
+    } finally {
+      setLoadingEVExplanation(false);
+    }
+  }
 
   function pushFloat(text: string, kind: FloatMoney["kind"], where: FloatMoney["where"]) {
     const id = ++floatId.current;
@@ -158,6 +217,29 @@ export default function Game({ mode, onExit }: { mode: ModeId; onExit: () => voi
     };
   }, [setShown]);
 
+  useEffect(() => {
+    if (mode !== "learning" || game?.status !== "playing" || shown.phase !== "player") return;
+
+    let cancelled = false;
+    const key = `${game.game_id}:${shown.round}:${game.player_hand.length}`;
+    getLearningAdvice(game.game_id)
+      .then((advice) => {
+        if (!cancelled) setAdviceState({ key, advice });
+      })
+      .catch((e) => {
+        if (!cancelled) {
+          setAdviceState({
+            key,
+            error: e instanceof Error ? e.message : "Could not calculate advice",
+          });
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [mode, game?.game_id, game?.player_hand.length, game?.status, shown.phase, shown.round]);
+
   if (!game) {
     return (
       <main className="flex min-h-screen flex-col items-center justify-center gap-4">
@@ -194,10 +276,60 @@ export default function Game({ mode, onExit }: { mode: ModeId; onExit: () => voi
   const natural = event?.effect === "natural";
   const glowPlayer = natural && (eventKey === "playerNatural" || eventKey === "bothNatural");
   const glowDealer = natural && (eventKey === "dealerNatural" || eventKey === "bothNatural");
+  const adviceKey = `${game.game_id}:${shown.round}:${game.player_hand.length}`;
+  const advice = adviceState?.key === adviceKey ? adviceState.advice : undefined;
 
   return (
     <main className="flex min-h-screen flex-col items-center gap-6 px-4 py-6">
       {natural && <div key={`flash-${shown.round}`} className="natural-flash" />}
+      {showLearningIntro && mode === "learning" && typeof document !== "undefined" && createPortal(
+        <div className="learning-intro-backdrop">
+          <section
+            className="learning-intro glass"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="learning-intro-title"
+            aria-describedby="learning-intro-description"
+          >
+            <button
+              className="learning-intro-close"
+              aria-label="Close Learning Mode introduction"
+              onClick={dismissLearningIntro}
+            >
+              ×
+            </button>
+            <h2 id="learning-intro-title" className="hand-title">Welcome to Learning Mode</h2>
+            <p id="learning-intro-description">
+              This learning tool helps you learn blackjack strategy. The best move is highlighted;
+              hover over it for more information.
+            </p>
+            <button className="btn btn-green" onClick={dismissLearningIntro}>
+              Close
+            </button>
+          </section>
+        </div>,
+        document.body,
+      )}
+      {showEVExplanation && typeof document !== "undefined" && createPortal(
+        <div className="learning-intro-backdrop" onMouseDown={(event) => {
+          if (event.target === event.currentTarget) setShowEVExplanation(false);
+        }}>
+          <section className="learning-intro ev-explanation-modal" role="dialog" aria-modal="true" aria-labelledby="ev-explanation-title">
+            <button className="learning-intro-close" aria-label="Close EV explanation" onClick={() => setShowEVExplanation(false)}>×</button>
+            <h2 id="ev-explanation-title" className="hand-title">How this EV is calculated</h2>
+            <div className="ev-explanation-values">
+              <span>Your hand: {game.player_hand.join(", ")} ({game.player_score})</span>
+              <span>Dealer shows: {game.dealer_hand[0]}</span>
+              <span>Bet: {formatMoney(game.bet_amount)} · Hit EV: {formatMoney(advice?.hit_ev ?? 0)} · Stand EV: {formatMoney(advice?.stand_ev ?? 0)}</span>
+            </div>
+            {loadingEVExplanation && <p role="status">Asking Gemini to explain these numbers…</p>}
+            {evExplanationError && <p className="error-text" role="alert">{evExplanationError}</p>}
+            {evExplanation && <p className="ev-explanation-text">{evExplanation}</p>}
+            <button className="btn btn-green" onClick={() => setShowEVExplanation(false)}>Close</button>
+          </section>
+        </div>,
+        document.body,
+      )}
 
       <header className="flex w-full max-w-4xl items-stretch gap-3">
         <div className="glass relative flex flex-1 flex-col px-5 py-3">
@@ -217,6 +349,8 @@ export default function Game({ mode, onExit }: { mode: ModeId; onExit: () => voi
         </button>
       </header>
 
+      <div className="game-content">
+        <div className="game-main-column">
       <section className="glass flex w-full max-w-4xl flex-col items-center gap-6 px-4 py-6">
         <div className="flex flex-col items-center gap-2">
           <h2 className="hand-title">
@@ -292,35 +426,57 @@ export default function Game({ mode, onExit }: { mode: ModeId; onExit: () => voi
         </div>
       </section>
 
-      <div className="flex min-h-16 flex-col items-center gap-3">
+        <div className="flex min-h-16 flex-col items-center gap-3">
         {game.status === "playing" && shown.phase === "player" && (
           <div className="fade-in flex gap-3">
-            <button
-              className="btn btn-green"
-              disabled={busy}
-              onClick={() => {
-                play(
-                  selectHitSound({
-                    bet: game.bet_amount,
-                    bankrollBeforeBet: game.bankroll + game.bet_amount,
-                    playerScore: game.player_score,
-                  }),
-                );
-                run("hit");
-              }}
-            >
-              Hit
-            </button>
-            <button
-              className="btn btn-orange"
-              disabled={busy}
-              onClick={() => {
-                play("stand");
-                run("stand");
-              }}
-            >
-              Stand
-            </button>
+            <div className="learning-choice">
+              <button
+                className={`btn btn-green${advice?.best_move === "hit" ? " btn-recommended" : ""}`}
+                disabled={busy}
+                onClick={() => {
+                  play(
+                    selectHitSound({
+                      bet: game.bet_amount,
+                      bankrollBeforeBet: game.bankroll + game.bet_amount,
+                      playerScore: game.player_score,
+                    }),
+                  );
+                  run("hit");
+                }}
+              >
+                Hit
+              </button>
+              {mode === "learning" && advice?.best_move === "hit" && (
+                <div className="learning-advice" aria-live="polite">
+                  <strong>Best move: Hit</strong>
+                  <span>Hit EV {formatMoney(advice.hit_ev)}</span>
+                  <span>Stand EV {formatMoney(advice.stand_ev)}</span>
+                  <small>Expected net change from this point in the hand.</small>
+                  <button className="btn btn-orange ev-explain-button" onClick={explainEV}>Explain the maths</button>
+                </div>
+              )}
+            </div>
+            <div className="learning-choice">
+              <button
+                className={`btn btn-orange${advice?.best_move === "stand" ? " btn-recommended" : ""}`}
+                disabled={busy}
+                onClick={() => {
+                  play("stand");
+                  run("stand");
+                }}
+              >
+                Stand
+              </button>
+              {mode === "learning" && advice?.best_move === "stand" && (
+                <div className="learning-advice" aria-live="polite">
+                  <strong>Best move: Stand</strong>
+                  <span>Hit EV {formatMoney(advice.hit_ev)}</span>
+                  <span>Stand EV {formatMoney(advice.stand_ev)}</span>
+                  <small>Expected net change from this point in the hand.</small>
+                  <button className="btn btn-orange ev-explain-button" onClick={explainEV}>Explain the maths</button>
+                </div>
+              )}
+            </div>
           </div>
         )}
 
@@ -379,6 +535,8 @@ export default function Game({ mode, onExit }: { mode: ModeId; onExit: () => voi
         )}
 
         {error && <p className="error-text">{error}</p>}
+        </div>
+        </div>
       </div>
     </main>
   );

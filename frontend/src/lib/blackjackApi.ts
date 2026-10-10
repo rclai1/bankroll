@@ -13,6 +13,14 @@ export interface GameView {
   result: GameResult;
 }
 
+export interface LearningAdvice {
+  best_move: "hit" | "stand";
+  /** Expected net bankroll change, in dollars, from this point in the hand. */
+  hit_ev: number;
+  stand_ev: number;
+  bet_amount: number;
+}
+
 const BASE = "/api/blackjack";
 
 async function request(path: string, body?: unknown): Promise<GameView> {
@@ -34,3 +42,13 @@ export const placeBet = (id: string, amount: number) =>
   request(`/games/${id}/bet`, { amount });
 export const hit = (id: string) => request(`/games/${id}/hit`);
 export const stand = (id: string) => request(`/games/${id}/stand`);
+
+export async function getLearningAdvice(id: string): Promise<LearningAdvice> {
+  const res = await fetch(`${BASE}/games/${id}/advice`);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const detail = data?.detail;
+    throw new Error(typeof detail === "string" ? detail : "Could not calculate advice");
+  }
+  return data as LearningAdvice;
+}

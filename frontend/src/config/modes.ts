@@ -18,7 +18,7 @@ export const MODES: ModeDef[] = [
   { id: "daily", label: "Daily", enabled: false, bgm: "bgm.daily", clickSfx: "menu.daily", style: "orange" },
   { id: "regular", label: "Regular Mode", enabled: true, bgm: "bgm.regular", clickSfx: "menu.regular", style: "green" },
   { id: "chaos", label: "Chaos Mode", enabled: false, bgm: "bgm.chaos", clickSfx: "menu.chaos", style: "orange" },
-  { id: "learning", label: "Learning Mode", enabled: false, bgm: "bgm.learning", clickSfx: "menu.learning", style: "aqua" },
+  { id: "learning", label: "Learning Mode", enabled: true, bgm: "bgm.learning", clickSfx: "menu.learning", style: "aqua" },
   // Unlock new card fronts/backs through a gambling system (not built yet).
   { id: "gambling", label: "Card Shop", enabled: false, bgm: "bgm.gambling", clickSfx: "menu.gambling", style: "aqua" },
 ];
