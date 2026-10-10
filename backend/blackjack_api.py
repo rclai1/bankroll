@@ -68,6 +68,11 @@ def _score(hand: list[str]) -> int:
     return score
 
 
+def _is_natural_blackjack(hand: list[str]) -> bool:
+    """Blackjack is only a 21 made with the original two-card hand."""
+    return len(hand) == 2 and _score(hand) == 21
+
+
 def _draw(game: Game) -> str:
     if not game.deck:
         game.deck = _new_deck()
@@ -151,8 +156,8 @@ def bet(game_id: str, request: BetRequest):
     game.dealer_hand = [_draw(game), _draw(game)]
     game.result = None
     game.status = "playing"
-    player_blackjack = _score(game.player_hand) == 21
-    dealer_blackjack = _score(game.dealer_hand) == 21
+    player_blackjack = _is_natural_blackjack(game.player_hand)
+    dealer_blackjack = _is_natural_blackjack(game.dealer_hand)
     if player_blackjack and dealer_blackjack:
         _settle(game, "push")
     elif player_blackjack:
