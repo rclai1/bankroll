@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import (
+    Boolean,
     Column,
     BigInteger,
     DateTime,
@@ -16,10 +17,12 @@ from sqlalchemy import (
     ForeignKey,
     Integer,
     MetaData,
+    SmallInteger,
     String,
     Table,
     Text,
     UniqueConstraint,
+    Identity,
     create_engine,
     text,
 )
@@ -44,6 +47,14 @@ users = Table(
     Column("password", Text, nullable=False),
     Column("salt", Text, nullable=False),
 )
+games = Table(
+    "games",
+    metadata,
+    Column("id", Integer, Identity(always=True), primary_key=True),
+    Column("user_id", Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
+    Column("curr_money", Float, nullable=False),
+    Column("cash_out", Boolean, nullable=False, default=False),
+)
 high_scores = Table(
     "high_scores",
     metadata,
@@ -58,6 +69,13 @@ seed_table = Table(
     Column("id", Integer, primary_key=True),
     Column("seed", BigInteger, nullable=False),
     Column("created_at", DateTime(timezone=True), nullable=False),
+)
+auth_sessions = Table(
+    "auth_sessions",
+    metadata,
+    Column("token_hash", String(64), primary_key=True),
+    Column("user_id", Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
+    Column("expires_at", DateTime(timezone=True), nullable=False),
 )
 
 router = APIRouter()
@@ -83,6 +101,7 @@ def _current_seed_reset(now: datetime) -> datetime:
     return reset
 
 
+@router.get("/getSeed")
 @router.get("/seed")
 def get_seed():
     """Return the singleton seed for the current UTC day starting at 03:00."""
@@ -109,7 +128,63 @@ def get_seed():
             row = connection.execute(
                 text("SELECT seed, created_at FROM seeds WHERE id = 1")
             ).mappings().one()
+        else:
+            # Clear the daily stop flag only when this call creates a new seed.
+            connection.execute(text("UPDATE games SET cash_out = FALSE, curr_money = 100"))
         return dict(row)
+
+
+@router.get("/daily/{user_id}")
+def get_daily_game(user_id: int):
+    """Load or create the user's daily bankroll using the current daily seed."""
+    seed_row = get_seed()
+    with engine.begin() as connection:
+        user_exists = connection.execute(
+            text("SELECT 1 FROM users WHERE id = :user_id"), {"user_id": user_id}
+        ).scalar_one_or_none()
+        if user_exists is None:
+            raise HTTPException(status_code=404, detail="User not found")
+        row = connection.execute(
+            text("SELECT id, curr_money, cash_out FROM games WHERE user_id = :user_id ORDER BY id DESC LIMIT 1 FOR UPDATE"),
+            {"user_id": user_id},
+        ).mappings().one_or_none()
+        if row is None:
+            row = connection.execute(
+                text("INSERT INTO games (user_id, curr_money, cash_out) VALUES (:user_id, 100, FALSE) RETURNING id, curr_money, cash_out"),
+                {"user_id": user_id},
+            ).mappings().one()
+        return {**dict(row), "seed": seed_row["seed"]}
+
+
+@router.post("/daily/{user_id}/cashout")
+def cash_out_daily_game(user_id: int):
+    """Lock the daily session after cashing out and return its final score."""
+    with engine.begin() as connection:
+        result = connection.execute(
+            text("UPDATE games SET cash_out = TRUE WHERE id = (SELECT id FROM games WHERE user_id = :user_id ORDER BY id DESC LIMIT 1) AND cash_out = FALSE RETURNING curr_money"),
+            {"user_id": user_id},
+        ).scalar_one_or_none()
+        if result is None:
+            row = connection.execute(
+                text("SELECT curr_money, cash_out FROM games WHERE user_id = :user_id ORDER BY id DESC LIMIT 1"),
+                {"user_id": user_id},
+            ).mappings().one_or_none()
+            if row is None:
+                raise HTTPException(status_code=404, detail="Daily game not found")
+            if not row["cash_out"]:
+                raise HTTPException(status_code=409, detail="Could not cash out daily game")
+            result = row["curr_money"]
+        return {"score": result, "cash_out": True}
+
+
+def save_daily_score(game_id: int, score: float) -> None:
+    with engine.begin() as connection:
+        result = connection.execute(
+            text("UPDATE games SET curr_money = :score WHERE id = :game_id AND cash_out = FALSE"),
+            {"score": score, "game_id": game_id},
+        )
+        if result.rowcount != 1:
+            raise HTTPException(status_code=409, detail="Daily game is already cashed out")
 
 
 @router.post("/high_scores", status_code=201)

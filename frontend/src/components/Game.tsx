@@ -5,7 +5,7 @@ import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import Card, { CARD_H, CARD_W, EmptySlot } from "./Card";
 import { AnimatedMoney, FloatingMoney, formatMoney, type FloatMoney } from "./Money";
-import { createGame, getLearningAdvice, hit, placeBet, stand, type GameView, type LearningAdvice } from "@/lib/blackjackApi";
+import { cashOutDailyGame, createDailyGame, createGame, getLearningAdvice, hit, placeBet, stand, uploadHighScore, type GameView, type LearningAdvice } from "@/lib/blackjackApi";
 import { score } from "@/lib/scoring";
 import { betSteps, hitSteps, standSteps, type StepApi } from "@/lib/roundSteps";
 import { INITIAL_SHOWN, useRoundTimeline } from "@/hooks/useRoundTimeline";
@@ -60,7 +60,7 @@ function useHandLayoutAnimation(layoutKey: string) {
   return ref;
 }
 
-export default function Game({ mode, onExit }: { mode: ModeId; onExit: () => void }) {
+export default function Game({ mode, userId, onExit }: { mode: ModeId; userId: number; onExit: () => void }) {
   useBgm(MODES_BY_ID[mode].bgm);
 
   const [game, setGame] = useState<GameView | null>(null);
@@ -80,6 +80,10 @@ export default function Game({ mode, onExit }: { mode: ModeId; onExit: () => voi
   const [evExplanation, setEVExplanation] = useState<string | null>(null);
   const [evExplanationError, setEVExplanationError] = useState<string | null>(null);
   const [loadingEVExplanation, setLoadingEVExplanation] = useState(false);
+  const [dailyScore, setDailyScore] = useState<number | null>(null);
+  const [finalNotice, setFinalNotice] = useState<"cashout" | "bust" | null>(null);
+  const [showBustScore, setShowBustScore] = useState(false);
+  const bustFinalized = useRef(false);
   const floatId = useRef(0);
   const { shown, setShown, play: playTimeline } = useRoundTimeline();
   const dealerHandRef = useHandLayoutAnimation(`${game?.game_id ?? "loading"}:${shown.round}:${shown.dDealt}`);
@@ -199,21 +203,80 @@ export default function Game({ mode, onExit }: { mode: ModeId; onExit: () => voi
       .catch((e) => setError(e instanceof Error ? e.message : "Could not reach the server"));
   }
 
+  async function cashOut() {
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await cashOutDailyGame(userId);
+      await uploadHighScore(userId, result.score);
+      setFinalNotice("cashout");
+      setTimeout(() => setDailyScore(result.score), 1400);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not cash out");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   useEffect(() => {
     let cancelled = false;
-    createGame()
-      .then((g) => {
-        if (cancelled) return;
-        setGame(g);
-        setShown((s) => ({ ...s, bankroll: g.bankroll }));
-      })
-      .catch((e) => {
+    async function loadGame() {
+      try {
+        if (mode === "daily") {
+          const daily = await createDailyGame(userId);
+          if (cancelled) return;
+          if (daily.cash_out) {
+            await uploadHighScore(userId, daily.score);
+            if (!cancelled) setDailyScore(daily.score);
+            return;
+          }
+          setGame(daily);
+          const finished = daily.status === "finished";
+          setBetting(!finished);
+          setShown((s) => ({
+            ...INITIAL_SHOWN,
+            round: daily.status === "waiting_for_bet" ? s.round : Math.max(1, s.round),
+            bankroll: daily.bankroll,
+            bet: daily.bet_amount,
+            phase: daily.status === "playing" ? "player" : finished ? "settled" : "idle",
+            pDealt: daily.player_hand.length,
+            pRevealed: daily.player_hand.length,
+            dDealt: daily.status === "waiting_for_bet" ? 0 : finished ? daily.dealer_hand.length : 2,
+            dRevealed: daily.status === "waiting_for_bet" ? 0 : finished ? daily.dealer_hand.length : 1,
+            settled: finished,
+          }));
+        } else {
+          const regular = await createGame();
+          if (cancelled) return;
+          setGame(regular);
+          setShown((s) => ({ ...s, bankroll: regular.bankroll }));
+        }
+      } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : "Could not reach the server");
-      });
+      }
+    }
+    void loadGame();
     return () => {
       cancelled = true;
     };
-  }, [setShown]);
+  }, [mode, userId, setShown]);
+
+  const bustedOut = Boolean(game && game.status === "finished" && shown.settled && game.bankroll <= 0);
+
+  useEffect(() => {
+    if (!bustedOut) return;
+    setFinalNotice("bust");
+    const timer = setTimeout(() => setShowBustScore(true), 1400);
+    return () => clearTimeout(timer);
+  }, [bustedOut]);
+
+  useEffect(() => {
+    if (mode !== "daily" || !bustedOut || bustFinalized.current) return;
+    bustFinalized.current = true;
+    cashOutDailyGame(userId)
+      .then((result) => uploadHighScore(userId, result.score))
+      .catch((e) => setError(e instanceof Error ? e.message : "Could not save your final score"));
+  }, [mode, userId, bustedOut]);
 
   useEffect(() => {
     if (mode !== "learning" || game?.status !== "playing" || shown.phase !== "player") return;
@@ -237,6 +300,33 @@ export default function Game({ mode, onExit }: { mode: ModeId; onExit: () => voi
       cancelled = true;
     };
   }, [mode, game?.game_id, game?.player_hand.length, game?.status, shown.phase, shown.round]);
+
+  if (mode === "daily" && dailyScore !== null) {
+    return (
+      <main className="flex min-h-screen flex-col items-center justify-center gap-4">
+        <section className="glass flex flex-col items-center gap-4 px-10 py-8">
+          <h1 className="title-text text-5xl sm:text-6xl">Daily game complete</h1>
+          <p>Your score: <strong>{formatMoney(dailyScore)}</strong></p>
+          <p>You can play Daily Mode again when the seed resets.</p>
+          <button className="btn btn-orange" onClick={onExit}>Menu</button>
+        </section>
+      </main>
+    );
+  }
+
+  if (bustedOut && showBustScore && game) {
+    return (
+      <main className="flex min-h-screen flex-col items-center justify-center gap-4">
+        <section className="glass flex flex-col items-center gap-4 px-10 py-8" role="alert">
+          <h1 className="title-text text-5xl sm:text-6xl">Busted out</h1>
+          <p>Your balance reached $0. The game is over.</p>
+          <p>Final score: <strong>{formatMoney(game.bankroll)}</strong></p>
+          {error && <p className="error-text">{error}</p>}
+          <button className="btn btn-orange" onClick={onExit}>Menu</button>
+        </section>
+      </main>
+    );
+  }
 
   if (!game) {
     return (
@@ -396,7 +486,13 @@ export default function Game({ mode, onExit }: { mode: ModeId; onExit: () => voi
               <div className="chip">${shown.bet}</div>
             </div>
           )}
-          {event && (
+          {finalNotice ? (
+            <div key={`final-${finalNotice}`} className="absolute flex flex-col items-center gap-1 text-center">
+              <div className={`result-banner ${finalNotice === "cashout" ? "win" : "loss"}`}>
+                {finalNotice === "cashout" ? "Cash out" : "Bust out"}
+              </div>
+            </div>
+          ) : event && (
             <div
               key={`result-${shown.round}`}
               className="absolute flex flex-col items-center gap-1"
@@ -492,7 +588,33 @@ export default function Game({ mode, onExit }: { mode: ModeId; onExit: () => voi
 
         {game.status === "finished" && shown.settled && !betting && (
           <div className="fade-in flex gap-3">
-            {broke ? (
+            {mode === "daily" ? (
+              <>
+                <button
+                  className="btn btn-green"
+                  disabled={busy}
+                  onClick={() => {
+                    play("nextRound");
+                    setBetting(true);
+                    setShown((s) => ({
+                      ...s,
+                      phase: "idle",
+                      pDealt: 0,
+                      pRevealed: 0,
+                      dDealt: 0,
+                      dRevealed: 0,
+                      settled: false,
+                      bet: 0,
+                    }));
+                  }}
+                >
+                  Next round
+                </button>
+                <button className="btn btn-orange" disabled={busy} onClick={cashOut}>
+                  Cash out · {formatMoney(game.bankroll)}
+                </button>
+              </>
+            ) : broke ? (
               <button
                 className="btn btn-green"
                 disabled={busy}

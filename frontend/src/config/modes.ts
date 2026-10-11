@@ -15,8 +15,8 @@ export interface ModeDef {
 }
 
 export const MODES: ModeDef[] = [
-  { id: "daily", label: "Daily", enabled: false, bgm: "bgm.daily", clickSfx: "menu.daily", style: "orange" },
-  { id: "regular", label: "Regular Mode", enabled: true, bgm: "bgm.regular", clickSfx: "menu.regular", style: "green" },
+  { id: "daily", label: "Daily", enabled: true, bgm: "bgm.daily", clickSfx: "menu.daily", style: "orange" },
+  { id: "regular", label: "Endless Mode", enabled: true, bgm: "bgm.regular", clickSfx: "menu.regular", style: "orange" },
   { id: "chaos", label: "Chaos Mode", enabled: false, bgm: "bgm.chaos", clickSfx: "menu.chaos", style: "orange" },
   { id: "learning", label: "Learning Mode", enabled: true, bgm: "bgm.learning", clickSfx: "menu.learning", style: "aqua" },
   // Unlock new card fronts/backs through a gambling system (not built yet).

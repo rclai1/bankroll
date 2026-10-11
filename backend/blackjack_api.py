@@ -14,6 +14,7 @@ from google import genai
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 from strategy import recommend_move
+from database import get_daily_game, save_daily_score
 
 router = APIRouter()
 RANKS = ("2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A")
@@ -30,6 +31,10 @@ class Game:
     bet_amount: float = 0.0
     status: Literal["waiting_for_bet", "playing", "finished"] = "waiting_for_bet"
     result: str | None = None
+    rng: random.Random = field(default_factory=random.Random)
+    daily_row_id: int | None = None
+    daily_user_id: int | None = None
+    daily_seed: int | None = None
 
 
 games: dict[str, Game] = {}
@@ -52,10 +57,9 @@ class EVExplanationRequest(BaseModel):
     advice: dict[str, float | str]
 
 
-def _new_deck() -> list[str]:
-    seed = os.urandom(8)
+def _new_deck(rng: random.Random | None = None) -> list[str]:
     deck = [f"{rank} of {suit}" for suit in SUITS for rank in RANKS]
-    generator = random.Random(seed)
+    generator = rng or random.Random(os.urandom(8))
     generator.shuffle(deck)
     return deck
 
@@ -83,7 +87,7 @@ def _is_natural_blackjack(hand: list[str]) -> bool:
 
 def _draw(game: Game) -> str:
     if not game.deck:
-        game.deck = _new_deck()
+        game.deck = _new_deck(game.rng)
     return game.deck.pop()
 
 
@@ -135,6 +139,27 @@ def _get_game(game_id: str) -> Game:
     return game
 
 
+def _ensure_daily_open(game: Game) -> None:
+    if game.daily_row_id is None:
+        return
+    from database import engine, get_seed
+    from sqlalchemy import text
+
+    with engine.connect() as connection:
+        cashed_out = connection.execute(
+            text("SELECT cash_out FROM games WHERE id = :id"), {"id": game.daily_row_id}
+        ).scalar_one_or_none()
+    if cashed_out is not False:
+        raise HTTPException(status_code=409, detail="Daily game has been cashed out")
+    if game.daily_seed != get_seed()["seed"]:
+        raise HTTPException(status_code=409, detail="Daily seed has reset; reload Daily Mode")
+
+
+def _persist_daily_round(game: Game) -> None:
+    if game.daily_row_id is not None and game.status == "finished":
+        save_daily_score(game.daily_row_id, game.bankroll)
+
+
 @router.post("/games", status_code=201)
 def create_game(request: NewGameRequest = NewGameRequest()):
     """Create a session with a starting bankroll (defaults to $100)."""
@@ -142,6 +167,32 @@ def create_game(request: NewGameRequest = NewGameRequest()):
     game = Game(game_id=game_id, bankroll=round(request.bankroll, 2))
     games[game_id] = game
     return _view(game)
+
+
+@router.post("/daily/{user_id}")
+def create_daily_game(user_id: int):
+    """Resume or create a daily session with the server's current seed."""
+    daily = get_daily_game(user_id)
+    if daily["cash_out"]:
+        return {"cash_out": True, "score": daily["curr_money"], "seed": daily["seed"]}
+    existing = next(
+        (game for game in games.values()
+         if game.daily_row_id == daily["id"] and game.daily_seed == daily["seed"]),
+        None,
+    )
+    if existing is not None:
+        return {**_view(existing), "cash_out": False, "seed": daily["seed"]}
+    game_id = str(uuid.uuid4())
+    game = Game(
+        game_id=game_id,
+        bankroll=round(float(daily["curr_money"]), 2),
+        rng=random.Random(int(daily["seed"])),
+        daily_row_id=int(daily["id"]),
+        daily_user_id=user_id,
+        daily_seed=int(daily["seed"]),
+    )
+    games[game_id] = game
+    return {**_view(game), "cash_out": False, "seed": daily["seed"]}
 
 
 @router.get("/games/{game_id}")
@@ -210,13 +261,14 @@ def explain_ev(request: EVExplanationRequest):
 def bet(game_id: str, request: BetRequest):
     """Place a bet and deal; a natural blackjack pays 3:2."""
     game = _get_game(game_id)
+    _ensure_daily_open(game)
     if game.status == "playing":
         raise HTTPException(status_code=409, detail="Finish the current round first")
     if request.amount > game.bankroll:
         raise HTTPException(status_code=400, detail="Bet exceeds available bankroll")
     game.bankroll = round(game.bankroll - request.amount, 2)
     game.bet_amount = round(request.amount, 2)
-    game.deck = _new_deck()
+    game.deck = _new_deck(game.rng)
     game.player_hand = [_draw(game), _draw(game)]
     game.dealer_hand = [_draw(game), _draw(game)]
     game.result = None
@@ -229,6 +281,7 @@ def bet(game_id: str, request: BetRequest):
         _settle(game, "blackjack")
     elif dealer_blackjack:
         _settle(game, "loss")
+    _persist_daily_round(game)
     return _view(game)
 
 
@@ -236,6 +289,7 @@ def bet(game_id: str, request: BetRequest):
 def hit(game_id: str):
     """Draw one card for the player."""
     game = _get_game(game_id)
+    _ensure_daily_open(game)
     if game.status != "playing":
         raise HTTPException(status_code=409, detail="There is no active round")
     game.player_hand.append(_draw(game))
@@ -244,6 +298,7 @@ def hit(game_id: str):
         _settle(game, "loss")
     elif player_score == 21:
         _resolve_round(game)
+    _persist_daily_round(game)
     return _view(game)
 
 
@@ -251,7 +306,9 @@ def hit(game_id: str):
 def stand(game_id: str):
     """Stand, play the dealer hand to 17, and settle the round."""
     game = _get_game(game_id)
+    _ensure_daily_open(game)
     if game.status != "playing":
         raise HTTPException(status_code=409, detail="There is no active round")
     _resolve_round(game)
+    _persist_daily_round(game)
     return _view(game)
