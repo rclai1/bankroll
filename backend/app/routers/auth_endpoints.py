@@ -10,8 +10,8 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
-from auth import hash_password, verify_password
-from database import auth_sessions, engine, users
+from .auth import hash_password, verify_password
+from .database import auth_sessions, engine, users
 
 router = APIRouter(prefix="/auth", tags=["authentication"])
 SESSION_COOKIE = "bankroll_session"

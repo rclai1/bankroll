@@ -2,9 +2,9 @@
 
 from fastapi import FastAPI
 
-from blackjack_api import router as blackjack_router
-from auth_endpoints import router as auth_router
-from database import create_tables, router as database_router
+from .routers.blackjack_api import router as blackjack_router
+from .routers.auth_endpoints import router as auth_router
+from .routers.database import create_tables, router as database_router
 
 
 app = FastAPI(title="Bankroll API", version="1.0.0")

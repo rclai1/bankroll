@@ -29,7 +29,7 @@ from sqlalchemy import (
     text,
 )
 
-load_dotenv(Path(__file__).resolve().parents[1] / ".env")
+load_dotenv(Path(__file__).resolve().parents[3] / ".env")
 connection = os.getenv("CONNECTION")
 if not connection:
     raise RuntimeError("CONNECTION was not found in the project .env file")
