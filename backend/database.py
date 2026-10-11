@@ -18,11 +18,11 @@ from sqlalchemy import (
     MetaData,
     String,
     Table,
+    Text,
     UniqueConstraint,
     create_engine,
     text,
 )
-from sqlalchemy.exc import IntegrityError
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 connection = os.getenv("CONNECTION")
@@ -40,6 +40,8 @@ users = Table(
     metadata,
     Column("id", Integer, primary_key=True),
     Column("username", String(50), nullable=False, unique=True),
+    Column("password", Text, nullable=False),
+    Column("salt", Text, nullable=False),
 )
 high_scores = Table(
     "high_scores",
@@ -58,10 +60,6 @@ seed_table = Table(
 )
 
 router = APIRouter()
-
-
-class CreateUserRequest(BaseModel):
-    username: str = Field(min_length=1, max_length=50, strip_whitespace=True)
 
 
 class CreateHighScoreRequest(BaseModel):
@@ -111,19 +109,6 @@ def get_seed():
                 text("SELECT seed, created_at FROM seeds WHERE id = 1")
             ).mappings().one()
         return dict(row)
-
-
-@router.post("/users", status_code=201)
-def create_user(request: CreateUserRequest):
-    """Create a user with a unique username."""
-    try:
-        with engine.begin() as connection:
-            result = connection.execute(
-                users.insert().values(username=request.username).returning(users.c.id, users.c.username)
-            )
-            return dict(result.mappings().one())
-    except IntegrityError as exc:
-        raise HTTPException(status_code=409, detail="Username already exists") from exc
 
 
 @router.post("/high_scores", status_code=201)
