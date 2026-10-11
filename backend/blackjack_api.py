@@ -171,7 +171,7 @@ def explain_ev(request: EVExplanationRequest):
         )
 
     prompt = (
-        "Explain this blackjack expected-value calculation for a curious average player, in plain language. "
+        "Explain this blackjack expected-value calculation for a curious blackjack player. "
         "Use the supplied facts accurately and do not recalculate or invent probabilities. Explain EV as a "
         "long-run average over repeated hands, that positive/negative values are net dollars relative to the "
         "already-placed bet, compare both choices, and say which is higher. Explain the actual method: exact "
@@ -180,7 +180,12 @@ def explain_ev(request: EVExplanationRequest):
         "to at least 17, and for Hit considering each possible next card then the better of Hit/Stand from that "
         "resulting state. The calculation conditions the hidden-card possibilities on the fact this hand is "
         "still active (dealer did not start with blackjack). State that EV is not a prediction of this one hand "
-        "and assumes this game's hit/stand rules; suits do not affect values. Keep it concise and accessible.\n\n"
+        "and assumes this game's hit/stand rules; suits do not affect values. Be very concise and accessible "
+        "with no long derivation or repeated facts. "
+        "If using math, ensure every LaTeX "
+        "expression is syntactically valid and fully enclosed: use $...$ for inline math and $$...$$ for display math. "
+        "Do not use unmatched dollar signs, mix delimiters, or put ordinary prose inside math delimiters. "
+        "Check that all braces and parentheses are balanced before responding.\n\n"
         f"Current hand facts: {json.dumps(request.dict())}"
     )
     try:

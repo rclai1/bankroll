@@ -1,5 +1,8 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import ReactMarkdown from "react-markdown";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
 import Card, { CARD_H, CARD_W, EmptySlot } from "./Card";
 import { AnimatedMoney, FloatingMoney, formatMoney, type FloatMoney } from "./Money";
 import { createGame, getLearningAdvice, hit, placeBet, stand, type GameView, type LearningAdvice } from "@/lib/blackjackApi";
@@ -14,6 +17,12 @@ import { selectDealSound, selectHitSound } from "@/audio/soundConfig";
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 const LEARNING_INTRO_STORAGE_KEY = "learning-mode-intro-seen-v2";
+
+function normalizeLatexDelimiters(markdown: string) {
+  return markdown
+    .replace(/\\\[([\s\S]+?)\\\]/g, (_, formula: string) => `$$\n${formula}\n$$`)
+    .replace(/\\\((.+?)\\\)/g, (_, formula: string) => `$${formula}$`);
+}
 
 function useHandLayoutAnimation(layoutKey: string) {
   const ref = useRef<HTMLDivElement>(null);
@@ -296,7 +305,9 @@ export default function Game({ mode, onExit }: { mode: ModeId; onExit: () => voi
               aria-label="Close Learning Mode introduction"
               onClick={dismissLearningIntro}
             >
-              ×
+              <svg aria-hidden="true" viewBox="0 0 24 24" className="learning-intro-close-icon">
+                <path d="M6 6l12 12M18 6L6 18" />
+              </svg>
             </button>
             <h2 id="learning-intro-title" className="hand-title">Welcome to Learning Mode</h2>
             <p id="learning-intro-description">
@@ -315,7 +326,11 @@ export default function Game({ mode, onExit }: { mode: ModeId; onExit: () => voi
           if (event.target === event.currentTarget) setShowEVExplanation(false);
         }}>
           <section className="learning-intro ev-explanation-modal" role="dialog" aria-modal="true" aria-labelledby="ev-explanation-title">
-            <button className="learning-intro-close" aria-label="Close EV explanation" onClick={() => setShowEVExplanation(false)}>×</button>
+            <button className="learning-intro-close ev-explanation-close" aria-label="Close EV explanation" onClick={() => setShowEVExplanation(false)}>
+              <svg aria-hidden="true" viewBox="0 0 24 24" className="learning-intro-close-icon">
+                <path d="M6 6l12 12M18 6L6 18" />
+              </svg>
+            </button>
             <h2 id="ev-explanation-title" className="hand-title">How this EV is calculated</h2>
             <div className="ev-explanation-values">
               <span>Your hand: {game.player_hand.join(", ")} ({game.player_score})</span>
@@ -324,8 +339,14 @@ export default function Game({ mode, onExit }: { mode: ModeId; onExit: () => voi
             </div>
             {loadingEVExplanation && <p role="status">Asking Gemini to explain these numbers…</p>}
             {evExplanationError && <p className="error-text" role="alert">{evExplanationError}</p>}
-            {evExplanation && <p className="ev-explanation-text">{evExplanation}</p>}
-            <button className="btn btn-green" onClick={() => setShowEVExplanation(false)}>Close</button>
+            {evExplanation && (
+              <div className="ev-explanation-text">
+                <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
+                  {normalizeLatexDelimiters(evExplanation)}
+                </ReactMarkdown>
+              </div>
+            )}
+            <button className="btn btn-green ev-explanation-dismiss" onClick={() => setShowEVExplanation(false)}>Close</button>
           </section>
         </div>,
         document.body,
