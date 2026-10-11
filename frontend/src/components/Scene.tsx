@@ -58,7 +58,16 @@ export default function Scene({
     setBubbles((list) =>
       list.map((b) =>
         b.id === id && b.phase !== "popping"
-          ? { ...b, phase: "popping", poppedFrom: b.phase }
+          ? {
+              ...b,
+              phase: "popping",
+              poppedFrom:
+                b.phase === "rising"
+                  ? "rising"
+                  : b.phase === "parked"
+                    ? "parked"
+                    : "stationary",
+            }
           : b,
       ),
     );
