@@ -392,6 +392,41 @@ body {
 
 .menu-account strong { color: var(--ink); }
 
+.shop-page { width: min(1420px, calc(100% - 3rem)); min-height: calc(100vh - 3rem); margin: 1.5rem auto; position: relative; z-index: 2; display: flex; flex-direction: column; }
+.shop-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 1.25rem; }
+.shop-header h1 { margin: 0; }
+.shop-balance { display: flex; align-items: center; justify-content: center; padding: .65rem 1rem; border-radius: 999px; background: rgba(255,255,255,.7); text-align: center; }
+.shop-currency { display: inline-flex; align-items: center; justify-content: center; gap: .3rem; line-height: 1; white-space: nowrap; }
+.shop-currency-icon { width: 22px; height: 22px; flex: none; display: inline-block; background-repeat: no-repeat; image-rendering: pixelated; }
+.shop-currency-label { display: block; line-height: 1; }
+.shop-layout { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(300px, .82fr) minmax(0, 1.8fr); gap: 1.25rem; align-items: stretch; }
+.shop-case, .shop-inventory { padding: 1.5rem; border: 1px solid var(--glass-edge); border-radius: 24px; box-shadow: 0 12px 30px rgba(10,70,120,.18); backdrop-filter: blur(12px); }
+.shop-case { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; gap: .8rem; }
+.shop-case h2, .shop-inventory h2 { margin: 0 0 .75rem; color: var(--ink); }
+.case-square { width: min(100%, 340px); aspect-ratio: 4 / 5; display: grid; place-items: center; padding: 1rem; }
+.case-square img { width: auto; height: 92%; max-width: 100%; max-height: 100%; object-fit: contain; image-rendering: pixelated; filter: drop-shadow(0 12px 9px rgba(0,43,83,.35)); }
+.case-odds { margin: .25rem 0; font-size: .88rem; font-weight: 700; }
+.case-open-button { width: min(100%, 340px); display: flex; align-items: center; justify-content: center; gap: .3rem; padding-block: .4rem; line-height: 1; }
+.shop-notice { font-weight: 700; }
+.shop-reward-backdrop { position: fixed; inset: 0; z-index: 10001; display: grid; place-items: center; overflow-y: auto; padding: 1rem; background: rgba(8, 25, 45, .68); backdrop-filter: blur(5px); }
+.shop-reward { width: min(92vw, 26rem); max-height: calc(100vh - 2rem); display: flex; flex-direction: column; align-items: center; gap: .8rem; overflow-y: auto; padding: 1.75rem; background: #f3f8ff; text-align: center; }
+.shop-reward h2, .shop-reward p { margin: 0; }
+.shop-reward-sprite { width: 142px; height: 190px; display: block; flex: none; border-radius: 9px; background-repeat: no-repeat; image-rendering: pixelated; box-shadow: 0 8px 20px rgba(10, 50, 80, .3); }
+.shop-inventory { min-width: 0; }
+.skin-grid { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: .75rem; }
+.skin-tile { min-width: 0; min-height: 150px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .35rem; position: relative; border: 2px solid rgba(255,255,255,.7); border-radius: 15px; background: rgba(255,255,255,.58); color: var(--ink); cursor: pointer; }
+.skin-tile:disabled { cursor: default; }
+.skin-tile.equipped { outline: 3px solid #39b72e; }
+.skin-sprite-frame { width: 71px; height: 95px; display: block; overflow: hidden; border-radius: 5px; box-shadow: 0 4px 10px rgba(0,50,100,.25); }
+.skin-sprite { width: 71px; height: 95px; display: block; background-repeat: no-repeat; image-rendering: pixelated; }
+.skin-tile.unowned .skin-sprite { filter: grayscale(1) brightness(.58); }
+.skin-lock { position: absolute; left: 0; right: 0; top: 50%; transform: translateY(-50%); color: white; font-weight: 800; text-shadow: 0 2px 4px #222; }
+.skin-name { text-transform: capitalize; font-weight: 700; }
+.skin-equipped { font-size: .72rem; font-weight: 800; color: #258a18; }
+
+@media (max-width: 900px) { .shop-layout { grid-template-columns: minmax(260px, .8fr) minmax(0, 1.2fr); } .skin-grid { grid-template-columns: repeat(3, minmax(0,1fr)); } }
+@media (max-width: 680px) { .shop-page { width: calc(100% - 1rem); margin: .5rem auto; } .shop-layout { grid-template-columns: 1fr; } .shop-case { padding: 1.25rem; } .case-square { max-width: 280px; } .shop-inventory { padding: 1rem; } .skin-grid { grid-template-columns: repeat(3, minmax(0,1fr)); } .shop-header { flex-wrap: wrap; } .shop-header h1 { order: -1; flex-basis: 100%; text-align: center; } }
+
 @media (max-width: 480px) {
   .auth-card { padding: 2rem 1.35rem; }
 }

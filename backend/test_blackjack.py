@@ -16,9 +16,9 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-import blackjack_api as bj  # noqa: E402
-import cpu_agents  # noqa: E402
-from cpu_agents import Action, BetChoice, DefaultCpuAgent, bet_for_choice  # noqa: E402
+import backend.app.routers.blackjack_api as bj  # noqa: E402
+import backend.app.routers.cpu_agents as cpu_agents  # noqa: E402
+from backend.app.routers.cpu_agents import Action, BetChoice, DefaultCpuAgent, bet_for_choice  # noqa: E402
 from fastapi import HTTPException  # noqa: E402
 
 

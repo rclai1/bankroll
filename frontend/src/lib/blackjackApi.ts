@@ -1,3 +1,5 @@
+import { apiFetch } from "@/lib/api";
+
 export type GameStatus = "waiting_for_bet" | "playing" | "finished";
 export type GameResult = "win" | "loss" | "push" | "blackjack" | "surrender" | null;
 export type PlayerStatus = "active" | "stood" | "double_down" | "surrender" | "bust" | "out";
@@ -98,6 +100,7 @@ export interface DailyGameResult {
   cash_out: true;
   score: number;
   seed: number;
+  reward?: number;
 }
 
 export interface HighScoreEntry {
@@ -110,7 +113,7 @@ export interface HighScoreEntry {
 const BASE = "/api/blackjack";
 
 async function request(path: string, body?: unknown): Promise<GameView> {
-  const res = await fetch(`${BASE}${path}`, {
+  const res = await apiFetch(`${BASE}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
@@ -127,20 +130,20 @@ async function request(path: string, body?: unknown): Promise<GameView> {
 export const createGame = (bankroll = 100, cpuCount = 0) =>
   request("/games", { bankroll, cpu_count: cpuCount });
 export async function createDailyGame(userId: number): Promise<DailyGameView | DailyGameResult> {
-  const res = await fetch(`${BASE}/daily/${userId}`, { method: "POST" });
+  const res = await apiFetch(`${BASE}/daily/${userId}`, { method: "POST" });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data?.detail ?? "Could not load daily game");
   if (data.cash_out) return data as DailyGameResult;
   return { ...normalize(data as RawGame), cash_out: false, seed: data.seed };
 }
-export async function cashOutDailyGame(userId: number): Promise<{ score: number; cash_out: true }> {
-  const res = await fetch(`${BASE}/daily/${userId}/cashout`, { method: "POST" });
+export async function cashOutDailyGame(userId: number): Promise<{ score: number; cash_out: true; reward: number }> {
+  const res = await apiFetch(`${BASE}/daily/${userId}/cashout`, { method: "POST" });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data?.detail ?? "Could not cash out");
   return data;
 }
 export async function uploadHighScore(userId: number, score: number): Promise<void> {
-  const res = await fetch(`${BASE}/high_scores`, {
+  const res = await apiFetch(`${BASE}/high_scores`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ user_id: userId, score }),
@@ -149,7 +152,7 @@ export async function uploadHighScore(userId: number, score: number): Promise<vo
   if (!res.ok) throw new Error(data?.detail ?? "Could not upload high score");
 }
 export async function getHighScores(): Promise<HighScoreEntry[]> {
-  const res = await fetch(`${BASE}/high_scores`);
+  const res = await apiFetch(`${BASE}/high_scores`);
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data?.detail ?? "Could not load leaderboard");
   return data as HighScoreEntry[];
@@ -164,7 +167,7 @@ export const surrender = (id: string) => request(`/games/${id}/surrender`);
 export const cpuTurn = (id: string) => request(`/games/${id}/cpu_turn`);
 
 export async function getLearningAdvice(id: string): Promise<LearningAdvice> {
-  const res = await fetch(`${BASE}/games/${id}/advice`);
+  const res = await apiFetch(`${BASE}/games/${id}/advice`);
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     const detail = data?.detail;

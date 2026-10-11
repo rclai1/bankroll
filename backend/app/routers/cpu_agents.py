@@ -34,7 +34,7 @@ from typing import Any, Protocol
 from dotenv import load_dotenv
 
 # Same project-root .env that database.py reads.
-load_dotenv(Path(__file__).resolve().parents[1] / ".env")
+load_dotenv(Path(__file__).resolve().parents[3] / ".env")
 
 logger = logging.getLogger("cpu_agents")
 

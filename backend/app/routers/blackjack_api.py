@@ -19,10 +19,10 @@ from typing import Literal
 from google import genai
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
-from strategy import recommend_move
-from database import get_daily_game, save_daily_score
+from .strategy import recommend_move
+from .database import get_daily_game, save_daily_score
 
-from cpu_agents import (
+from .cpu_agents import (
     MIN_BET,
     Action,
     CpuAgent,
@@ -339,7 +339,7 @@ def _get_game(game_id: str) -> Game:
 def _ensure_daily_open(game: Game) -> None:
     if game.daily_row_id is None:
         return
-    from database import engine, get_seed
+    from .database import engine, get_seed
     from sqlalchemy import text
 
     with engine.connect() as connection:

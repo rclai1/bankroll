@@ -1,8 +1,14 @@
+# Backend API runtime dependencies
 fastapi
 uvicorn
 sqlalchemy
 sqlalchemy-timescaledb
 psycopg2-binary
+pydantic
 python-dotenv
-google
 google-genai
+cryptography
+PyJWT
+
+# Needed by backend/test_blackjack.py (also used by google-genai)
+httpx
