@@ -11,11 +11,16 @@ from .routers.database import create_tables, router as database_router
 
 
 app = FastAPI(title="Bankroll API", version="1.0.0")
-allowed_origins = [
+configured_origins = [
     origin.strip().rstrip("/")
-    for origin in os.getenv("FRONTEND_ORIGINS", "http://localhost:3000").split(",")
+    for origin in os.getenv("FRONTEND_ORIGINS", "").split(",")
     if origin.strip()
 ]
+allowed_origins = sorted({
+    "http://localhost:3000",
+    "https://bankroll-rclj-736dmvlsg-reed-lais-projects.vercel.app",
+    *configured_origins,
+})
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
