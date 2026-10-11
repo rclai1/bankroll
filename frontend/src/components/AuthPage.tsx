@@ -49,7 +49,7 @@ export default function AuthPage({ onAuthenticated }: { onAuthenticated: (user: 
       <section className="glass auth-card fade-in" aria-labelledby="auth-title">
         <div className="auth-mark" aria-hidden="true">♠</div>
         <p className="auth-eyebrow">A little luck, a little skill</p>
-        <h1 className="title-text auth-title" id="auth-title">Welcome to the table</h1>
+        <h1 className="title-text auth-title" id="auth-title">Welcome to Bankroll</h1>
         <p className="auth-subtitle">Sign in to play, or create an account to get started.</p>
 
         <div className="auth-tabs" role="tablist" aria-label="Account access">
@@ -71,7 +71,6 @@ export default function AuthPage({ onAuthenticated }: { onAuthenticated: (user: 
             {busy ? "Please wait…" : registering ? "Create account" : "Sign in"}
           </button>
         </form>
-        <p className="auth-footnote">Your password is protected and never shown on screen.</p>
       </section>
     </main>
   );

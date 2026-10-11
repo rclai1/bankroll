@@ -26,6 +26,7 @@ import { score } from "@/lib/scoring";
 import { betSteps, cpuTurnSteps, hitSteps, standSteps, type StepApi } from "@/lib/roundSteps";
 import { INITIAL_SHOWN, useRoundTimeline } from "@/hooks/useRoundTimeline";
 import { TIMING } from "@/config/timing";
+import cardSheet from "@/assets/cards/balatro_cards.png";
 import { CARD_SCALE } from "@/config/layout";
 import { ROUND_EVENTS, getRoundEvent } from "@/config/messages";
 import { MODES_BY_ID, type ModeId } from "@/config/modes";
@@ -565,9 +566,17 @@ export default function Game({
 
       <header className="flex w-full max-w-5xl items-stretch gap-3">
         <div className="glass relative flex flex-1 flex-col px-4 py-2">
-          <span className="label">Bankroll</span>
+          <span className="label">Doubloons</span>
           <span>
-            <span className="coin" />
+            <span
+              className="coin"
+              aria-hidden="true"
+              style={{
+                backgroundImage: `url("${cardSheet.src}")`,
+                backgroundSize: `${cardSheet.width * (20 / 27)}px ${cardSheet.height * (20 / 27)}px`,
+                backgroundPosition: `${-156 * (20 / 27)}px ${-15 * (20 / 27)}px`,
+              }}
+            />
             <AnimatedMoney value={shown.bankroll} duration={TIMING.MONEY_TWEEN_MS} />
           </span>
           <FloatingMoney items={floats.filter((f) => f.where === "bank")} />
