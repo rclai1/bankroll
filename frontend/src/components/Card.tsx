@@ -10,6 +10,14 @@ const CELL_W = 71;
 const CELL_H = 95;
 const SCALE = 2;
 
+export type CardSkin = "default" | "gray" | "blue" | "yellow" | "green" | "fade" | "ancient" | "maze" | "stars" | "wedges" | "transit";
+export const SKIN_COORDS: Record<CardSkin, [number, number]> = {
+  // Convert the 1-based grid coordinates used for this sheet to zero-based
+  // sprite indices. Each cell is 71x95 pixels.
+  default: [0, 0], gray: [3, 2], blue: [0, 2], yellow: [1, 2], green: [2, 2],
+  fade: [5, 2], ancient: [4, 1], maze: [0, 4], stars: [3, 4], wedges: [2, 4], transit: [1, 4],
+};
+
 export const CARD_W = CELL_W * SCALE;
 export const CARD_H = CELL_H * SCALE;
 
@@ -45,15 +53,17 @@ export default function Card({
   faceUp,
   glow = false,
   scale = SCALE,
+  skin = "default",
 }: {
   card?: string;
   faceUp: boolean;
   glow?: boolean;
   scale?: number;
+  skin?: CardSkin;
 }) {
   const [rank, , suit] = card ? card.split(" ") : [];
   const front = card
-    ? spriteStyle(facesSheet, RANKS.indexOf(rank), SUITS.indexOf(suit), scale)
+    ? skin === "ancient" ? spriteStyle(cardSheet, ...SKIN_COORDS.ancient, scale) : spriteStyle(facesSheet, RANKS.indexOf(rank), SUITS.indexOf(suit), scale)
     : undefined;
 
   return (
@@ -65,7 +75,7 @@ export default function Card({
           aria-label={faceUp && card ? card : "Face-down card"}
           style={front}
         />
-        <div className="card-face card-back" aria-hidden style={spriteStyle(cardSheet, 0, 0, scale)} />
+        <div className="card-face card-back" aria-hidden style={spriteStyle(cardSheet, ...SKIN_COORDS[skin], scale)} />
       </div>
     </div>
   );

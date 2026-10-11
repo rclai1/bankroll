@@ -2,11 +2,13 @@
 
 import os
 import secrets
+import hashlib
+import random
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Cookie, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import (
     Boolean,
@@ -46,6 +48,17 @@ users = Table(
     Column("username", String(50), nullable=False, unique=True),
     Column("password", Text, nullable=False),
     Column("salt", Text, nullable=False),
+    Column("gray", SmallInteger, nullable=False, server_default="0"),
+    Column("blue", SmallInteger, nullable=False, server_default="0"),
+    Column("yellow", SmallInteger, nullable=False, server_default="0"),
+    Column("green", SmallInteger, nullable=False, server_default="0"),
+    Column("fade", SmallInteger, nullable=False, server_default="0"),
+    Column("ancient", SmallInteger, nullable=False, server_default="0"),
+    Column("maze", SmallInteger, nullable=False, server_default="0"),
+    Column("stars", SmallInteger, nullable=False, server_default="0"),
+    Column("wedges", SmallInteger, nullable=False, server_default="0"),
+    Column("transit", SmallInteger, nullable=False, server_default="0"),
+    Column("equipped_skin", String(16), nullable=False, server_default="default"),
 )
 games = Table(
     "games",
@@ -89,6 +102,81 @@ class CreateHighScoreRequest(BaseModel):
 def create_tables() -> None:
     """Create the API tables if this is a fresh database."""
     metadata.create_all(engine)
+    # Add shop fields to databases created before the card shop existed.
+    with engine.begin() as connection:
+        for name in ("gray", "blue", "yellow", "green", "fade", "ancient", "maze", "stars", "wedges", "transit"):
+            connection.execute(text(f'ALTER TABLE users ADD COLUMN IF NOT EXISTS "{name}" SMALLINT NOT NULL DEFAULT 0'))
+        connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS equipped_skin VARCHAR(16) NOT NULL DEFAULT 'default'"))
+
+
+CARD_SKINS = ("gray", "blue", "yellow", "green", "fade", "ancient", "maze", "stars", "wedges", "transit")
+COMMON_SKINS = CARD_SKINS[:4]
+RARE_SKINS = CARD_SKINS[4:]
+SHOP_COST = 10
+
+
+def _shop_user(connection, session_token: str | None, *, lock: bool = False):
+    if not session_token:
+        raise HTTPException(status_code=401, detail="Sign in to use the card shop")
+    token_hash = hashlib.sha256(session_token.encode()).hexdigest()
+    suffix = " FOR UPDATE" if lock else ""
+    user = connection.execute(text(
+        "SELECT users.id, users.balance, users.equipped_skin, "
+        + ", ".join(f'users."{name}"' for name in CARD_SKINS)
+        + " FROM users JOIN auth_sessions ON users.id = auth_sessions.user_id "
+        "WHERE auth_sessions.token_hash = :token_hash AND auth_sessions.expires_at > :now" + suffix
+    ), {"token_hash": token_hash, "now": datetime.now(timezone.utc)}).mappings().one_or_none()
+    if user is None:
+        raise HTTPException(status_code=401, detail="Sign in to use the card shop")
+    return user
+
+
+def _shop_payload(user):
+    return {"balance": user["balance"], "equipped_skin": user["equipped_skin"],
+            "owned": ["default"] + [name for name in CARD_SKINS if user[name] == 1]}
+
+
+@router.get("/shop")
+def get_shop(bankroll_session: str | None = Cookie(default=None)):
+    with engine.connect() as connection:
+        return _shop_payload(_shop_user(connection, bankroll_session))
+
+
+@router.post("/shop/roll")
+def roll_shop(bankroll_session: str | None = Cookie(default=None)):
+    with engine.begin() as connection:
+        user = _shop_user(connection, bankroll_session, lock=True)
+        if user["balance"] < SHOP_COST:
+            raise HTTPException(status_code=409, detail="Not enough aircoin")
+        result = random.choices(("nothing", "common", "rare"), weights=(80, 15, 5), k=1)[0]
+        reward = random.choice(COMMON_SKINS if result == "common" else RARE_SKINS) if result != "nothing" else None
+        duplicate = bool(reward and user[reward] == 1)
+        refund = SHOP_COST if duplicate else 0
+        connection.execute(text(
+            "UPDATE users SET balance = balance - :cost + :refund"
+            + (f', "{reward}" = 1' if reward else "")
+            + " WHERE id = :user_id"
+        ), {"cost": SHOP_COST, "refund": refund, "user_id": user["id"]})
+        updated = _shop_user(connection, bankroll_session)
+        return {**_shop_payload(updated), "result": result, "reward": reward,
+                "duplicate": duplicate, "refund": refund}
+
+
+class EquipSkinRequest(BaseModel):
+    skin: str
+
+
+@router.post("/shop/equip")
+def equip_shop_skin(request: EquipSkinRequest, bankroll_session: str | None = Cookie(default=None)):
+    if request.skin != "default" and request.skin not in CARD_SKINS:
+        raise HTTPException(status_code=400, detail="Unknown card skin")
+    with engine.begin() as connection:
+        user = _shop_user(connection, bankroll_session, lock=True)
+        if request.skin != "default" and user[request.skin] != 1:
+            raise HTTPException(status_code=403, detail="You do not own this card skin")
+        connection.execute(text("UPDATE users SET equipped_skin = :skin WHERE id = :user_id"), {"skin": request.skin, "user_id": user["id"]})
+        updated = _shop_user(connection, bankroll_session)
+        return _shop_payload(updated)
 
 
 def _current_seed_reset(now: datetime) -> datetime:
@@ -158,12 +246,13 @@ def get_daily_game(user_id: int):
 
 @router.post("/daily/{user_id}/cashout")
 def cash_out_daily_game(user_id: int):
-    """Lock the daily session after cashing out and return its final score."""
+    """Lock the daily session, award its completion bonus, and return its score."""
     with engine.begin() as connection:
         result = connection.execute(
             text("UPDATE games SET cash_out = TRUE WHERE id = (SELECT id FROM games WHERE user_id = :user_id ORDER BY id DESC LIMIT 1) AND cash_out = FALSE RETURNING curr_money"),
             {"user_id": user_id},
         ).scalar_one_or_none()
+        reward = 0
         if result is None:
             row = connection.execute(
                 text("SELECT curr_money, cash_out FROM games WHERE user_id = :user_id ORDER BY id DESC LIMIT 1"),
@@ -174,7 +263,13 @@ def cash_out_daily_game(user_id: int):
             if not row["cash_out"]:
                 raise HTTPException(status_code=409, detail="Could not cash out daily game")
             result = row["curr_money"]
-        return {"score": result, "cash_out": True}
+        elif result > 0:
+            connection.execute(
+                text("UPDATE users SET balance = balance + 100 WHERE id = :user_id"),
+                {"user_id": user_id},
+            )
+            reward = 100
+        return {"score": result, "cash_out": True, "reward": reward}
 
 
 def save_daily_score(game_id: int, score: float) -> None:

@@ -9,10 +9,12 @@ export default function MainMenu({
   onStart,
   username,
   onSignOut,
+  onShop,
 }: {
   onStart: (mode: ModeId, cpuCount: CpuCount) => void;
   username: string;
   onSignOut: () => void;
+  onShop: () => void;
 }) {
   useBgm("bgm.menu");
   const [tab, setTab] = useState<"play" | "leaderboard">("play");
@@ -55,7 +57,7 @@ export default function MainMenu({
         </div>
         <h1 className="title-text text-5xl sm:text-7xl">title pending</h1>
         {tab === "play" ? (
-          <div className="flex w-72 gap-3" aria-label="Main menu actions">
+        <div className="flex w-72 gap-3" aria-label="Main menu actions">
             <button className="btn btn-green flex-1 px-2" onClick={() => {
               play("menu.daily");
               onStart("daily", 0);
@@ -74,7 +76,8 @@ export default function MainMenu({
                 disabled={!mode.enabled}
                 onClick={() => {
                   play(mode.clickSfx);
-                  if (mode.askCpuCount) setPending(mode);
+                  if (mode.id === "gambling") onShop();
+                  else if (mode.askCpuCount) setPending(mode);
                   else onStart(mode.id, 0);
                 }}
               >

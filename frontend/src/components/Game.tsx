@@ -32,6 +32,7 @@ import { ROUND_EVENTS, getRoundEvent } from "@/config/messages";
 import { MODES_BY_ID, type ModeId } from "@/config/modes";
 import { play, useBgm } from "@/audio/useSound";
 import { selectDealSound, selectHitSound } from "@/audio/soundConfig";
+import type { CardSkin } from "./Card";
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 function normalizeLatexDelimiters(markdown: string) {
@@ -93,11 +94,13 @@ export default function Game({
   mode,
   cpuCount,
   userId,
+  equippedSkin,
   onExit,
 }: {
   mode: ModeId;
   cpuCount: number;
   userId: number;
+  equippedSkin: CardSkin;
   onExit: () => void;
 }) {
   useBgm(MODES_BY_ID[mode].bgm);
@@ -123,6 +126,7 @@ export default function Game({
   const [evExplanationError, setEVExplanationError] = useState<string | null>(null);
   const [loadingEVExplanation, setLoadingEVExplanation] = useState(false);
   const [dailyScore, setDailyScore] = useState<number | null>(null);
+  const [dailyReward, setDailyReward] = useState(0);
   const [finalNotice, setFinalNotice] = useState<"cashout" | "bust" | null>(null);
   const [showBustScore, setShowBustScore] = useState(false);
   const bustFinalized = useRef(false);
@@ -336,6 +340,7 @@ export default function Game({
     try {
       const result = await cashOutDailyGame(userId);
       await uploadHighScore(userId, result.score);
+      setDailyReward(result.reward);
       setFinalNotice("cashout");
       setTimeout(() => setDailyScore(result.score), 1400);
     } catch (e) {
@@ -435,6 +440,7 @@ export default function Game({
         <section className="glass flex flex-col items-center gap-4 px-10 py-8">
           <h1 className="title-text text-5xl sm:text-6xl">Daily game complete</h1>
           <p>Your score: <strong>{formatMoney(dailyScore)}</strong></p>
+          {dailyReward > 0 && <p>You earned 100 aircoin!</p>}
           <p>You can play Daily Mode again when the seed resets.</p>
           <button className="btn btn-orange" onClick={onExit}>Menu</button>
         </section>
@@ -624,7 +630,7 @@ export default function Game({
                 className="card-hand-item"
                 style={main}
               >
-                <Card card={c} faceUp={i < shown.dRevealed} glow={glowDealer && i < 2} scale={CARD_SCALE.main} />
+                <Card card={c} faceUp={i < shown.dRevealed} glow={glowDealer && i < 2} scale={CARD_SCALE.main} skin={equippedSkin} />
               </div>
             ))}
           </div>
@@ -674,7 +680,7 @@ export default function Game({
                 className="card-hand-item"
                 style={main}
               >
-                <Card card={c} faceUp={i < shown.pRevealed} glow={glowPlayer && i < 2} scale={CARD_SCALE.main} />
+                <Card card={c} faceUp={i < shown.pRevealed} glow={glowPlayer && i < 2} scale={CARD_SCALE.main} skin={equippedSkin} />
               </div>
             ))}
           </div>

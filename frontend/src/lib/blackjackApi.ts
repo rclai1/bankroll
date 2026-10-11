@@ -98,6 +98,7 @@ export interface DailyGameResult {
   cash_out: true;
   score: number;
   seed: number;
+  reward?: number;
 }
 
 export interface HighScoreEntry {
@@ -133,7 +134,7 @@ export async function createDailyGame(userId: number): Promise<DailyGameView | D
   if (data.cash_out) return data as DailyGameResult;
   return { ...normalize(data as RawGame), cash_out: false, seed: data.seed };
 }
-export async function cashOutDailyGame(userId: number): Promise<{ score: number; cash_out: true }> {
+export async function cashOutDailyGame(userId: number): Promise<{ score: number; cash_out: true; reward: number }> {
   const res = await fetch(`${BASE}/daily/${userId}/cashout`, { method: "POST" });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data?.detail ?? "Could not cash out");

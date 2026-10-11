@@ -22,6 +22,14 @@ const nextConfig: NextConfig = {
         source: "/api/blackjack/:path*",
         destination: "http://localhost:8000/:path*",
       },
+      {
+        source: "/api/shop/:path*",
+        destination: "http://localhost:8000/shop/:path*",
+      },
+      {
+        source: "/api/shop",
+        destination: "http://localhost:8000/shop",
+      },
     ];
   },
 };
