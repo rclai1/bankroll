@@ -1,16 +1,25 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import ReactMarkdown from "react-markdown";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
 import Card, { EmptySlot, cardSize } from "./Card";
 import CpuSeat from "./CpuSeat";
 import { AnimatedMoney, FloatingMoney, formatMoney, type FloatMoney } from "./Money";
 import {
+  cashOutDailyGame,
   cpuTurn,
+  createDailyGame,
   createGame,
   doubleDown,
+  getLearningAdvice,
   hit,
   placeBet,
   stand,
   surrender,
+  uploadHighScore,
   type GameView,
+  type LearningAdvice,
 } from "@/lib/blackjackApi";
 import { BET_PRESETS, minBetFor, presetAmount } from "@/config/betting";
 import { score } from "@/lib/scoring";
@@ -24,6 +33,11 @@ import { play, useBgm } from "@/audio/useSound";
 import { selectDealSound, selectHitSound } from "@/audio/soundConfig";
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
+function normalizeLatexDelimiters(markdown: string) {
+  return markdown
+    .replace(/\\\[([\s\S]+?)\\\]/g, (_, formula: string) => `$$\n${formula}\n$$`)
+    .replace(/\\\((.+?)\\\)/g, (_, formula: string) => `$${formula}$`);
+}
 
 /** Starting visible state for a freshly created game. */
 function shownFor(g: GameView) {
@@ -77,10 +91,12 @@ function useHandLayoutAnimation(layoutKey: string) {
 export default function Game({
   mode,
   cpuCount,
+  userId,
   onExit,
 }: {
   mode: ModeId;
   cpuCount: number;
+  userId: number;
   onExit: () => void;
 }) {
   useBgm(MODES_BY_ID[mode].bgm);
@@ -95,6 +111,20 @@ export default function Game({
   // Seat whose CPU is currently deciding (a call takes about 3-15 s), and a CPU turn to retry after an error.
   const [thinking, setThinking] = useState<number | null>(null);
   const [cpuStuck, setCpuStuck] = useState<GameView | null>(null);
+  const [adviceState, setAdviceState] = useState<{
+    key: string;
+    advice?: LearningAdvice;
+    error?: string;
+  } | null>(null);
+  const [showLearningIntro, setShowLearningIntro] = useState(false);
+  const [showEVExplanation, setShowEVExplanation] = useState(false);
+  const [evExplanation, setEVExplanation] = useState<string | null>(null);
+  const [evExplanationError, setEVExplanationError] = useState<string | null>(null);
+  const [loadingEVExplanation, setLoadingEVExplanation] = useState(false);
+  const [dailyScore, setDailyScore] = useState<number | null>(null);
+  const [finalNotice, setFinalNotice] = useState<"cashout" | "bust" | null>(null);
+  const [showBustScore, setShowBustScore] = useState(false);
+  const bustFinalized = useRef(false);
   const floatId = useRef(0);
   const alive = useRef(true);
   const afterBetRef = useRef(0);
@@ -108,6 +138,44 @@ export default function Game({
       alive.current = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (mode !== "learning") return;
+    setShowLearningIntro(true);
+  }, [mode]);
+
+  function dismissLearningIntro() {
+    setShowLearningIntro(false);
+  }
+
+  async function explainEV() {
+    if (!game || !advice) return;
+    setShowEVExplanation(true);
+    setEVExplanation(null);
+    setEVExplanationError(null);
+    setLoadingEVExplanation(true);
+    try {
+      const response = await fetch("/api/blackjack/explain-ev", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          player_hand: game.player_hand,
+          dealer_upcard: game.dealer_hand[0],
+          player_total: game.player_score,
+          bet_amount: game.bet_amount,
+          bankroll: game.bankroll,
+          advice,
+        }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error ?? "Could not get an explanation.");
+      setEVExplanation(data.explanation);
+    } catch (e) {
+      setEVExplanationError(e instanceof Error ? e.message : "Could not get an explanation.");
+    } finally {
+      setLoadingEVExplanation(false);
+    }
+  }
 
   function pushFloat(text: string, kind: FloatMoney["kind"], where: FloatMoney["where"]) {
     const id = ++floatId.current;
@@ -261,21 +329,131 @@ export default function Game({
       .catch((e) => setError(e instanceof Error ? e.message : "Could not reach the server"));
   }
 
+  async function cashOut() {
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await cashOutDailyGame(userId);
+      await uploadHighScore(userId, result.score);
+      setFinalNotice("cashout");
+      setTimeout(() => setDailyScore(result.score), 1400);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not cash out");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   useEffect(() => {
     let cancelled = false;
-    createGame(100, cpuCount)
-      .then((g) => {
-        if (cancelled) return;
-        setGame(g);
-        setShown((s) => ({ ...s, ...shownFor(g) }));
-      })
-      .catch((e) => {
+    async function loadGame() {
+      try {
+        if (mode === "daily") {
+          const daily = await createDailyGame(userId);
+          if (cancelled) return;
+          if (daily.cash_out) {
+            await uploadHighScore(userId, daily.score);
+            if (!cancelled) setDailyScore(daily.score);
+            return;
+          }
+          setGame(daily);
+          const finished = daily.status === "finished";
+          setBetting(!finished);
+          setShown((s) => ({
+            ...INITIAL_SHOWN,
+            ...shownFor(daily),
+            round: daily.status === "waiting_for_bet" ? s.round : Math.max(1, s.round),
+            bankroll: daily.bankroll,
+            bet: daily.bet_amount,
+            phase: daily.status === "playing" ? "player" : finished ? "settled" : "idle",
+            pDealt: daily.player_hand.length,
+            pRevealed: daily.player_hand.length,
+            dDealt: daily.status === "waiting_for_bet" ? 0 : finished ? daily.dealer_hand.length : 2,
+            dRevealed: daily.status === "waiting_for_bet" ? 0 : finished ? daily.dealer_hand.length : 1,
+            settled: finished,
+          }));
+        } else {
+          const regular = await createGame(100, cpuCount);
+          if (cancelled) return;
+          setGame(regular);
+          setShown((s) => ({ ...s, ...shownFor(regular) }));
+        }
+      } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : "Could not reach the server");
-      });
+      }
+    }
+    void loadGame();
     return () => {
       cancelled = true;
     };
-  }, [setShown, cpuCount]);
+  }, [mode, userId, cpuCount, setShown]);
+
+  const bustedOut = Boolean(game && game.status === "finished" && shown.settled && game.bankroll <= 0);
+
+  useEffect(() => {
+    if (!bustedOut) return;
+    setFinalNotice("bust");
+    const timer = setTimeout(() => setShowBustScore(true), 1400);
+    return () => clearTimeout(timer);
+  }, [bustedOut]);
+
+  useEffect(() => {
+    if (mode !== "daily" || !bustedOut || bustFinalized.current) return;
+    bustFinalized.current = true;
+    cashOutDailyGame(userId)
+      .then((result) => uploadHighScore(userId, result.score))
+      .catch((e) => setError(e instanceof Error ? e.message : "Could not save your final score"));
+  }, [mode, userId, bustedOut]);
+
+  useEffect(() => {
+    if (mode !== "learning" || game?.status !== "playing" || shown.phase !== "player") return;
+
+    let cancelled = false;
+    const key = `${game.game_id}:${shown.round}:${game.player_hand.length}`;
+    getLearningAdvice(game.game_id)
+      .then((advice) => {
+        if (!cancelled) setAdviceState({ key, advice });
+      })
+      .catch((e) => {
+        if (!cancelled) {
+          setAdviceState({
+            key,
+            error: e instanceof Error ? e.message : "Could not calculate advice",
+          });
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [mode, game?.game_id, game?.player_hand.length, game?.status, shown.phase, shown.round]);
+
+  if (mode === "daily" && dailyScore !== null) {
+    return (
+      <main className="flex min-h-screen flex-col items-center justify-center gap-4">
+        <section className="glass flex flex-col items-center gap-4 px-10 py-8">
+          <h1 className="title-text text-5xl sm:text-6xl">Daily game complete</h1>
+          <p>Your score: <strong>{formatMoney(dailyScore)}</strong></p>
+          <p>You can play Daily Mode again when the seed resets.</p>
+          <button className="btn btn-orange" onClick={onExit}>Menu</button>
+        </section>
+      </main>
+    );
+  }
+
+  if (bustedOut && showBustScore && game) {
+    return (
+      <main className="flex min-h-screen flex-col items-center justify-center gap-4">
+        <section className="glass flex flex-col items-center gap-4 px-10 py-8" role="alert">
+          <h1 className="title-text text-5xl sm:text-6xl">Busted out</h1>
+          <p>Your balance reached $0. The game is over.</p>
+          <p>Final score: <strong>{formatMoney(game.bankroll)}</strong></p>
+          {error && <p className="error-text">{error}</p>}
+          <button className="btn btn-orange" onClick={onExit}>Menu</button>
+        </section>
+      </main>
+    );
+  }
 
   if (!game) {
     return (
@@ -314,6 +492,8 @@ export default function Game({
   const natural = event?.effect === "natural";
   const glowPlayer = natural && (eventKey === "playerNatural" || eventKey === "bothNatural");
   const glowDealer = natural && (eventKey === "dealerNatural" || eventKey === "bothNatural");
+  const adviceKey = `${game.game_id}:${shown.round}:${game.player_hand.length}`;
+  const advice = adviceState?.key === adviceKey ? adviceState.advice : undefined;
 
   const seats = ([1, 2] as const)
     .map((seat) => ({ seat, player: game.players[seat], side: seat === 1 ? ("left" as const) : ("right" as const) }))
@@ -322,6 +502,66 @@ export default function Game({
   return (
     <main className="flex min-h-screen flex-col items-center gap-4 px-4 py-4">
       {natural && <div key={`flash-${shown.round}`} className="natural-flash" />}
+      {showLearningIntro && mode === "learning" && typeof document !== "undefined" && createPortal(
+        <div className="learning-intro-backdrop">
+          <section
+            className="learning-intro glass"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="learning-intro-title"
+            aria-describedby="learning-intro-description"
+          >
+            <button
+              className="learning-intro-close"
+              aria-label="Close Learning Mode introduction"
+              onClick={dismissLearningIntro}
+            >
+              <svg aria-hidden="true" viewBox="0 0 24 24" className="learning-intro-close-icon">
+                <path d="M6 6l12 12M18 6L6 18" />
+              </svg>
+            </button>
+            <h2 id="learning-intro-title" className="hand-title">Welcome to Learning Mode</h2>
+            <p id="learning-intro-description">
+              This learning tool helps you learn blackjack strategy. The best move is highlighted;
+              hover over it for more information.
+            </p>
+            <button className="btn btn-green" onClick={dismissLearningIntro}>
+              Close
+            </button>
+          </section>
+        </div>,
+        document.body,
+      )}
+      {showEVExplanation && typeof document !== "undefined" && createPortal(
+        <div className="learning-intro-backdrop" onMouseDown={(event) => {
+          if (event.target === event.currentTarget) setShowEVExplanation(false);
+        }}>
+          <section className="learning-intro ev-explanation-modal" role="dialog" aria-modal="true" aria-labelledby="ev-explanation-title">
+            <button className="learning-intro-close ev-explanation-close" aria-label="Close EV explanation" onClick={() => setShowEVExplanation(false)}>
+              <svg aria-hidden="true" viewBox="0 0 24 24" className="learning-intro-close-icon">
+                <path d="M6 6l12 12M18 6L6 18" />
+              </svg>
+            </button>
+            <h2 id="ev-explanation-title" className="hand-title">How this EV is calculated</h2>
+            <div className="ev-explanation-values">
+              <span>Your hand: {game.player_hand.join(", ")} ({game.player_score})</span>
+              <span>Dealer shows: {game.dealer_hand[0]}</span>
+              <span>Bet: {formatMoney(game.bet_amount)} · Hit EV: {formatMoney(advice?.hit_ev ?? 0)} · Stand EV: {formatMoney(advice?.stand_ev ?? 0)}</span>
+            </div>
+            {loadingEVExplanation && <p role="status">Asking Gemini to explain these numbers…</p>}
+            {evExplanationError && <p className="error-text" role="alert">{evExplanationError}</p>}
+            {evExplanation && (
+              <div className="ev-explanation-text">
+                <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
+                  {normalizeLatexDelimiters(evExplanation)}
+                </ReactMarkdown>
+              </div>
+            )}  
+            <button className="btn btn-green ev-explanation-dismiss" onClick={() => setShowEVExplanation(false)}>Ok!</button>
+          </section>
+        </div>,
+        document.body,
+      )}
 
       <header className="flex w-full max-w-5xl items-stretch gap-3">
         <div className="glass relative flex flex-1 flex-col px-4 py-2">
@@ -341,6 +581,8 @@ export default function Game({
         </button>
       </header>
 
+      <div className="game-content">
+        <div className="game-main-column">
       <section className={`table-box glass flex w-full max-w-5xl flex-col items-center gap-4 px-4 py-4${seats.length ? " has-cpus" : ""}`}>
         {seats.map(({ seat, player, side }) => (
           <CpuSeat
@@ -388,7 +630,13 @@ export default function Game({
               <div className="chip">${shown.bet}</div>
             </div>
           )}
-          {event && (
+          {finalNotice ? (
+            <div key={`final-${finalNotice}`} className="absolute flex flex-col items-center gap-1 text-center">
+              <div className={`result-banner ${finalNotice === "cashout" ? "win" : "loss"}`}>
+                {finalNotice === "cashout" ? "Cash out" : "Bust out"}
+              </div>
+            </div>
+          ) : event && (
             <div
               key={`result-${shown.round}`}
               className="absolute flex flex-col items-center gap-1"
@@ -431,33 +679,56 @@ export default function Game({
       <div className="flex min-h-14 flex-col items-center gap-2">
         {game.status === "playing" && shown.phase === "player" && game.current_player === 0 && (
           <div className="fade-in flex flex-wrap justify-center gap-2">
-            <button
-              className="btn btn-green btn-md"
-              disabled={busy}
-              onClick={() => {
-                play(
-                  selectHitSound({
-                    bet: game.bet_amount,
-                    bankrollBeforeBet: game.bankroll + game.bet_amount,
-                    playerScore: game.player_score,
-                  }),
-                );
-                run("hit");
-              }}
-            >
-              Hit
-            </button>
-            <button
-              className="btn btn-orange btn-md"
-              disabled={busy}
-              onClick={() => {
-                play("stand");
-                run("stand");
-              }}
-            >
-              Stand
-            </button>
-            {game.legal_actions.includes("double_down") && (
+            <div className="learning-choice">
+              <button
+                className={`btn btn-green btn-md${advice?.best_move === "hit" ? " btn-recommended" : ""}`}
+                disabled={busy}
+                onClick={() => {
+                  play(
+                    selectHitSound({
+                      bet: game.bet_amount,
+                      bankrollBeforeBet: game.bankroll + game.bet_amount,
+                      playerScore: game.player_score,
+                    }),
+                  );
+                  run("hit");
+                }}
+              >
+                Hit
+              </button>
+              {mode === "learning" && advice?.best_move === "hit" && (
+                <div className="learning-advice" aria-live="polite">
+                  <strong>Best move: Hit</strong>
+                  <span>Hit EV {formatMoney(advice.hit_ev)}</span>
+                  <span>Stand EV {formatMoney(advice.stand_ev)}</span>
+                  <small>Expected net change from this point in the hand.</small>
+                  <button className="btn btn-blue ev-explain-button" onClick={explainEV}>Explain the maths</button>
+                </div>
+              )}
+            </div>
+            <div className="learning-choice">
+              <button
+                className={`btn btn-orange btn-md${advice?.best_move === "stand" ? " btn-recommended" : ""}`}
+                disabled={busy}
+                onClick={() => {
+                  play("stand");
+                  run("stand");
+                }}
+              >
+                Stand
+              </button>
+              {mode === "learning" && advice?.best_move === "stand" && (
+                <div className="learning-advice" aria-live="polite">
+                  <strong>Best move: Stand</strong>
+                  <span>Hit EV {formatMoney(advice.hit_ev)}</span>
+                  <span>Stand EV {formatMoney(advice.stand_ev)}</span>
+                  <small>Expected net change from this point in the hand.</small>
+                  <button className="btn btn-blue ev-explain-button" onClick={explainEV}>Explain the maths</button>
+                </div>
+              )}
+            </div>
+            {/* Learning Mode's advice only compares Hit and Stand, so the extra actions are hidden there. */}
+            {mode !== "learning" && game.legal_actions.includes("double_down") && (
               <button
                 className="btn btn-md"
                 disabled={busy}
@@ -469,7 +740,7 @@ export default function Game({
                 Double Down
               </button>
             )}
-            {game.legal_actions.includes("surrender") && (
+            {mode !== "learning" && game.legal_actions.includes("surrender") && (
               <button
                 className="btn btn-red btn-md"
                 disabled={busy}
@@ -492,7 +763,33 @@ export default function Game({
 
         {game.status === "finished" && shown.settled && !betting && (
           <div className="fade-in flex gap-2">
-            {broke ? (
+            {mode === "daily" ? (
+              <>
+                <button
+                  className="btn btn-green btn-md"
+                  disabled={busy}
+                  onClick={() => {
+                    play("nextRound");
+                    setBetting(true);
+                    setShown((s) => ({
+                      ...s,
+                      phase: "idle",
+                      pDealt: 0,
+                      pRevealed: 0,
+                      dDealt: 0,
+                      dRevealed: 0,
+                      settled: false,
+                      bet: 0,
+                    }));
+                  }}
+                >
+                  Next round
+                </button>
+                <button className="btn btn-orange btn-md" disabled={busy} onClick={cashOut}>
+                  Cash out · {formatMoney(game.bankroll)}
+                </button>
+              </>
+            ) : broke ? (
               <button
                 className="btn btn-green btn-md"
                 disabled={busy}
@@ -561,6 +858,8 @@ export default function Game({
         )}
 
         {error && <p className="error-text">{error}</p>}
+        </div>
+        </div>
       </div>
     </main>
   );
