@@ -2,9 +2,7 @@ import type { NextConfig } from "next";
 
 const apiOrigin =
   process.env.BACKEND_URL ??
-  (process.env.NODE_ENV === "production"
-    ? "https://bankroll-tau.vercel.app"
-    : "http://localhost:8000");
+  "http://localhost:8000";
 
 const nextConfig: NextConfig = {
   /* config options here */
@@ -18,6 +16,7 @@ const nextConfig: NextConfig = {
     },
   },
   reactStrictMode: true,
+  output: "standalone",
   async rewrites() {
     return [
       {

@@ -1,0 +1,79 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "services": {
+    "frontend": {
+      "root": "frontend/",
+      "runtime": "container",
+      "entrypoint": "Dockerfile.vercel"
+    },
+    "backend": {
+      "root": "backend/",
+      "runtime": "container",
+      "entrypoint": "Dockerfile.vercel",
+      "routes": [
+        {
+          "src": "/api/auth/(.*)",
+          "transforms": [
+            {
+              "type": "request.path",
+              "op": "set",
+              "args": "/auth/$1"
+            }
+          ]
+        },
+        {
+          "src": "/api/blackjack/(.*)",
+          "transforms": [
+            {
+              "type": "request.path",
+              "op": "set",
+              "args": "/$1"
+            }
+          ]
+        },
+        {
+          "src": "/api/shop/(.*)",
+          "transforms": [
+            {
+              "type": "request.path",
+              "op": "set",
+              "args": "/shop/$1"
+            }
+          ]
+        },
+        {
+          "src": "/api/shop",
+          "transforms": [
+            {
+              "type": "request.path",
+              "op": "set",
+              "args": "/shop"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/api/auth/(.*)",
+      "destination": { "service": "backend" }
+    },
+    {
+      "source": "/api/blackjack/(.*)",
+      "destination": { "service": "backend" }
+    },
+    {
+      "source": "/api/shop/(.*)",
+      "destination": { "service": "backend" }
+    },
+    {
+      "source": "/api/shop",
+      "destination": { "service": "backend" }
+    },
+    {
+      "source": "/(.*)",
+      "destination": { "service": "frontend" }
+    }
+  ]
+}

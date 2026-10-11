@@ -1,0 +1,26 @@
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.vercel
+    env_file:
+      - .env
+    environment:
+      PORT: "8000"
+      FRONTEND_ORIGINS: http://localhost:3000
+    ports:
+      - "8000:8000"
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.vercel
+      args:
+        BACKEND_URL: http://backend:8000
+    environment:
+      PORT: "3000"
+      HOSTNAME: 0.0.0.0
+    depends_on:
+      - backend
+    ports:
+      - "3000:3000"
