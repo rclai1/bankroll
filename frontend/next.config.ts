@@ -12,6 +12,14 @@ const nextConfig: NextConfig = {
     },
   },
   reactStrictMode: true,
+  async rewrites() {
+    return [
+      {
+        source: "/api/blackjack/:path*",
+        destination: "http://localhost:8000/:path*",
+      },
+    ];
+  },
 };
 
 export default nextConfig;

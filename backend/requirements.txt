@@ -1,0 +1,8 @@
+fastapi
+uvicorn
+sqlalchemy
+sqlalchemy-timescaledb
+psycopg2-binary
+python-dotenv
+google
+google-genai
