@@ -206,6 +206,21 @@ body {
   box-shadow: 0 5px 14px rgba(170, 90, 10, 0.45), inset 0 -3px 6px rgba(255, 255, 255, 0.45);
 }
 
+.btn-red {
+  background: linear-gradient(180deg, #ffb7a6 0%, #ee4a26 50%, #c3300f 51%, #ff7d5a 100%);
+  box-shadow: 0 5px 14px rgba(150, 40, 10, 0.45), inset 0 -3px 6px rgba(255, 255, 255, 0.45);
+}
+
+.btn-sm {
+  padding: 0.35rem 1rem;
+  font-size: 0.9rem;
+}
+
+.btn.selected {
+  outline: 3px solid #fff;
+  box-shadow: 0 0 16px rgba(255, 255, 255, 0.95), 0 5px 14px rgba(10, 100, 170, 0.45);
+}
+
 .btn-lg {
   padding: 0.9rem 3rem;
   font-size: 1.35rem;
@@ -335,7 +350,7 @@ body {
 .money {
   font-weight: 800;
   font-variant-numeric: tabular-nums;
-  font-size: 1.5rem;
+  font-size: 1.25rem;
   transition: color 0.2s, text-shadow 0.2s;
 }
 
@@ -380,9 +395,10 @@ body {
 .chip {
   display: grid;
   place-items: center;
-  width: 4.2rem;
-  height: 4.2rem;
+  width: 3.4rem;
+  height: 3.4rem;
   border-radius: 50%;
+  font-size: 0.85rem;
   font-weight: 800;
   color: #fff;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
@@ -425,8 +441,8 @@ body {
 
 /* ---------- Result banner & misc ---------- */
 .result-banner {
-  padding: 0.5rem 2.2rem;
-  font-size: 1.9rem;
+  padding: 0.35rem 1.8rem;
+  font-size: 1.5rem;
   font-weight: 800;
   border-radius: 999px;
   color: #fff;
@@ -473,7 +489,8 @@ body {
 .passthrough .glass,
 .passthrough button,
 .passthrough a,
-.passthrough input {
+.passthrough input,
+.passthrough .modal-backdrop {
   pointer-events: auto;
 }
 
@@ -544,8 +561,8 @@ body {
 .result-banner.natural {
   position: relative;
   overflow: hidden;
-  padding: 0.5rem 3rem;
-  font-size: 2.6rem;
+  padding: 0.4rem 2.4rem;
+  font-size: 2rem;
   background: linear-gradient(180deg, #fff3a8, #ffc21f 50%, #f09000 51%, #ffd75a);
   text-shadow: 0 2px 3px rgba(130, 70, 0, 0.7);
   box-shadow: 0 0 40px rgba(255, 210, 60, 0.95), 0 8px 24px rgba(150, 90, 0, 0.5);
@@ -604,6 +621,161 @@ body {
 
 @keyframes card-glow {
   50% { box-shadow: 0 0 28px 8px rgba(255, 214, 70, 0.95); }
+}
+
+/* ---------- Compact buttons, CPU-count pop-up ---------- */
+.btn-md {
+  padding: 0.5rem 1.3rem;
+  font-size: 0.95rem;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.3), rgba(10, 90, 150, 0.5));
+  backdrop-filter: blur(3px);
+  animation: fade-in 0.25s ease backwards;
+}
+
+.modal {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.5rem;
+  width: min(92vw, 28rem);
+  padding: 2rem 2.5rem;
+  animation: banner-pop 0.4s cubic-bezier(0.3, 1.5, 0.5, 1) backwards;
+}
+
+.modal-title {
+  font-size: 1.9rem;
+}
+
+.cpu-options {
+  display: flex;
+  gap: 1rem;
+}
+
+.cpu-option {
+  width: 4.2rem;
+  height: 4.2rem;
+  padding: 0;
+  font-size: 1.7rem;
+  border-radius: 50%;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 0.8rem;
+}
+
+/* ---------- CPU seats (left / right edge of the table) ---------- */
+.table-box {
+  position: relative;
+}
+
+.seat-side {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.seat-title {
+  font-size: 0.95rem;
+}
+
+.seat-money {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--ink);
+  text-align: center;
+}
+
+.seat-bet {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--ink-soft);
+}
+
+.seat-cards {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.side-card {
+  position: relative;
+  flex: none;
+  width: var(--cw);
+  height: var(--ch);
+}
+
+.side-card.overlap {
+  margin-left: calc(var(--cw) * -0.4);
+}
+
+.seat-status {
+  min-height: 1.3em;
+  font-size: 0.85rem;
+  font-weight: 800;
+  color: #fff;
+  text-align: center;
+  text-shadow: 0 1px 0 rgba(10, 100, 170, 0.7), 0 2px 8px rgba(10, 100, 170, 0.6);
+}
+
+.seat-side.thinking .seat-status {
+  animation: seat-pulse 1.1s ease-in-out infinite;
+}
+
+@keyframes seat-pulse {
+  50% { opacity: 0.45; }
+}
+
+@media (min-width: 768px) {
+  /* Pin the CPUs to the edges and keep the dealer/player in the middle. */
+  .table-box.has-cpus {
+    padding-left: 10rem;
+    padding-right: 10rem;
+  }
+
+  .seat-side {
+    position: absolute;
+    top: 50%;
+    width: 8.5rem;
+    transform: translateY(-50%);
+  }
+
+  .seat-left { left: 0.75rem; }
+  .seat-right { right: 0.75rem; }
+
+  /* Cards lie sideways, stacked top to bottom: swap the footprint and rotate. */
+  .seat-cards {
+    flex-direction: column;
+    gap: 0.3rem;
+  }
+
+  .side-card {
+    width: var(--ch);
+    height: var(--cw);
+  }
+
+  .side-card-inner {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%) rotate(var(--rot));
+  }
+
+  .side-card.overlap {
+    margin-left: 0;
+    margin-top: calc(var(--cw) * -0.4);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -20,6 +20,8 @@ export const TIMING = {
   DEALER_REVEAL_PAUSE_MS: 800,
   /** After the dealer flips (or draws), pause so the player can read the total. */
   DEALER_DRAW_PAUSE_MS: 1300,
+  /** After a CPU's action is shown, pause before the next CPU (or the dealer) goes. */
+  CPU_ACTION_PAUSE_MS: 700,
   /** Pause after the last card before the result is shown. */
   SETTLE_PAUSE_MS: 700,
 } as const;

@@ -26,6 +26,7 @@ Put audio files in `public/audio/` and reference them as `/audio/<file>`.
 | `deal.low` / `deal.mid` / `deal.high` | `Game.tsx` bet form submit via `selectDealSound(bet, bankroll)` | Tune `DEAL_SOUND_THRESHOLDS` (bet as a fraction of total money) |
 | `hit.default` / `hit.highBet` / `hit.hardHand` | `Game.tsx` Hit button via `selectHitSound(...)` | Tune `HIT_SOUND_THRESHOLDS`; add more variants/`TODO(sfx)` in `selectHitSound` |
 | `stand` | `Game.tsx` Stand button | |
+| `double` / `surrender` | `Game.tsx` Double Down / Surrender buttons | |
 | `nextRound` | `Game.tsx` "Next round" / "new game" button | |
 | `blackjack.natural` | `Game.tsx` `settleRound`, via `ROUND_EVENTS[...].sfx` | Natural blackjack (player, dealer, or both) |
 
@@ -56,3 +57,12 @@ size. The sequence itself is built in `src/lib/roundSteps.ts`.
 Per mode: `label`, `enabled` (only `regular` is true), `bgm` key, `clickSfx` key,
 button `style`. Set `enabled: true` once a mode exists, and handle `mode` in
 `Game.tsx` (currently every mode would run the regular rules).
+
+## 5. CPU players (backend `cpu_agents.py` + `cpu_turn` endpoint)
+
+The UI shows CPUs: Regular Mode asks for 0, 1 or 2 CPUs in a pop-up (`MainMenu.tsx`, `CPU_COUNTS` in `src/config/layout.ts`), CPU 1 sits on the left edge of the table and CPU 2 on the right (`CpuSeat.tsx`). The API supports them
+(`POST /games {"cpu_count": 0-2}`) and Google Gemini can drive them (`CPU_AGENT=gemini`, key `GEMINI_KEY` in the project `.env`).
+
+- `backend/cpu_agents.py`: the agent seam. `GeminiCpuAgent` keeps one stored Gemini conversation per CPU seat (chained with `previous_interaction_id`, bets and actions in the same chain, restarted after `GEMINI_MAX_CHAIN_TURNS`); all seats share one client. If Gemini is unavailable the seat falls back to the default agent. Timing constants `CPU_MIN_ACTION_SECONDS` (3) and `CPU_MAX_ACTION_SECONDS` (15); at 15 s a CPU stands (bets fall back to the minimum).
+- Turn flow: after the human's last action the response has `status: "playing"` and `current_player` set to a CPU. `Game.tsx` (`driveCpus`) then calls `cpuTurn(game_id)` repeatedly (each call = one CPU action, 3-15 s) until `status === "finished"`, showing "Thinking…" under that seat and animating each action with `cpuTurnSteps` in `src/lib/roundSteps.ts`; the dealer's events arrive in the last response. If a call fails, a "Retry CPU turn" button appears. Sizes: `CARD_SCALE` in `src/config/layout.ts`.
+- `GameView.players` / `events` carry everything needed to render CPU seats and animate their actions.

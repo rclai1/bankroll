@@ -17,7 +17,8 @@ export type RoundEventKey =
   | "win"
   | "loss"
   | "push"
-  | "bust";
+  | "bust"
+  | "surrender";
 
 export interface RoundEventDef {
   banner: string;
@@ -39,10 +40,12 @@ export const ROUND_EVENTS: Record<RoundEventKey, RoundEventDef> = {
   loss: { banner: "You lose", subtitle: null, sfx: null, effect: "none", tone: "loss" },
   push: { banner: "Push", subtitle: null, sfx: null, effect: "none", tone: "push" },
   bust: { banner: "Bust!", subtitle: null, sfx: null, effect: "none", tone: "loss" },
+  surrender: { banner: "Surrendered", subtitle: null, sfx: null, effect: "none", tone: "loss" },
 };
 
 /** Classify a finished round. */
 export function getRoundEvent(view: GameView): RoundEventKey {
+  if (view.result === "surrender") return "surrender";
   const playerNatural = isNatural(view.player_hand);
   const dealerNatural = isNatural(view.dealer_hand);
   if (playerNatural && dealerNatural) return "bothNatural";

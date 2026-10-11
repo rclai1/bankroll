@@ -50,6 +50,8 @@ export const SOUNDS = {
 
   // --- Other buttons ---
   stand: sound(),
+  double: sound(), // Double Down button
+  surrender: sound(), // Surrender button
   nextRound: sound(),
 
   // --- Special round events (see config/messages.ts) ---
