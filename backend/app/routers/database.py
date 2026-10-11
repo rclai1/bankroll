@@ -180,7 +180,7 @@ def equip_shop_skin(request: EquipSkinRequest, bankroll_session: str | None = Co
 
 
 def _current_seed_reset(now: datetime) -> datetime:
-    """Return the current daily reset boundary in UTC."""
+    """Return the current daily reset boundary: 09:00 UTC (4:00 AM EST, 5:00 AM during daylight saving)."""
     reset = now.astimezone(timezone.utc).replace(
         hour=9, minute=0, second=0, microsecond=0
     )
@@ -191,7 +191,12 @@ def _current_seed_reset(now: datetime) -> datetime:
 
 @router.get("/seed")
 def get_seed():
-    """Return the singleton seed for the current UTC day starting at 00:00."""
+    """Return the singleton seed for the current daily period.
+
+    A period starts at 09:00 UTC (4:00 AM EST; 5:00 AM during daylight saving).
+    The first call after a reset creates a new seed, resets every player's daily
+    progress, and clears the leaderboard (``high_scores``).
+    """
     now = datetime.now(timezone.utc)
     reset_at = _current_seed_reset(now)
     with engine.begin() as connection:
