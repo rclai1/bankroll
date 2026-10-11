@@ -193,17 +193,16 @@ def equip_shop_skin(
 def _current_seed_reset(now: datetime) -> datetime:
     """Return the current daily reset boundary in UTC."""
     reset = now.astimezone(timezone.utc).replace(
-        hour=3, minute=0, second=0, microsecond=0
+        hour=9, minute=0, second=0, microsecond=0
     )
     if now.astimezone(timezone.utc) < reset:
         reset -= timedelta(days=1)
     return reset
 
 
-@router.get("/getSeed")
 @router.get("/seed")
 def get_seed():
-    """Return the singleton seed for the current UTC day starting at 03:00."""
+    """Return the singleton seed for the current UTC day starting at 00:00."""
     now = datetime.now(timezone.utc)
     reset_at = _current_seed_reset(now)
     with engine.begin() as connection:
@@ -213,7 +212,7 @@ def get_seed():
                    VALUES (1, :seed, :created_at)
                    ON CONFLICT (id) DO UPDATE
                    SET seed = EXCLUDED.seed, created_at = EXCLUDED.created_at
-                   WHERE seeds.created_at < :reset_at
+                   WHERE seeds.created_at <> :reset_at
                    RETURNING seed, created_at"""
             ),
             {
@@ -228,8 +227,9 @@ def get_seed():
                 text("SELECT seed, created_at FROM seeds WHERE id = 1")
             ).mappings().one()
         else:
-            # Clear the daily stop flag only when this call creates a new seed.
+            # Reset daily progress and leaderboard only when this call creates a new seed.
             connection.execute(text("UPDATE games SET cash_out = FALSE, curr_money = 100"))
+            connection.execute(text("DELETE FROM high_scores"))
         return dict(row)
 
 
