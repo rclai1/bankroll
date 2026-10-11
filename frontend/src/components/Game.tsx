@@ -359,7 +359,7 @@ export default function Game({
             Dealer
             {dealerScore !== null && <span className="score-badge">{dealerScore}</span>}
           </h2>
-          <div ref={dealerHandRef} className="flex w-full flex-wrap justify-start gap-2" style={{ minHeight: main.height }}>
+          <div ref={dealerHandRef} className="flex w-full flex-wrap justify-center gap-2" style={{ minHeight: main.height }}>
             {!hasCards && (
               <>
                 <EmptySlot scale={CARD_SCALE.main} />
@@ -403,7 +403,7 @@ export default function Game({
         </div>
 
         <div className="flex w-full flex-col items-center gap-1">
-          <div ref={playerHandRef} className="flex w-full flex-wrap justify-start gap-2" style={{ minHeight: main.height }}>
+          <div ref={playerHandRef} className="flex w-full flex-wrap justify-center gap-2" style={{ minHeight: main.height }}>
             {!hasCards && (
               <>
                 <EmptySlot scale={CARD_SCALE.main} />
