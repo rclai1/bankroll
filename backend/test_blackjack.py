@@ -66,6 +66,7 @@ class BlackjackTestCase(unittest.IsolatedAsyncioTestCase):
         for p in patches:
             p.start()
             self.addCleanup(p.stop)
+        bj.games.clear()  # games are module-global; keep tests independent
 
     def new_game(self, bankroll=100.0, cpus=0):
         view = bj.create_game(bj.NewGameRequest(bankroll=bankroll, cpu_count=cpus))
@@ -203,6 +204,73 @@ class SinglePlayerTests(BlackjackTestCase):
         game = self.new_game()
         with self.assertRaises(HTTPException) as ctx:
             bj.hit(game.game_id)
+        self.assertEqual(ctx.exception.status_code, 409)
+
+
+class DailyAndAdviceTests(BlackjackTestCase):
+    """Daily mode (seeded, saved to the database) and Learning-mode advice on the multi-player game."""
+
+    def daily_row(self, seed=1234, money=100.0):
+        return {"id": 7, "seed": seed, "curr_money": money, "cash_out": False}
+
+    def open_daily(self, **row):
+        with mock.patch.object(bj, "get_daily_game", return_value=self.daily_row(**row)):
+            return bj.create_daily_game(user_id=1)
+
+    async def test_daily_game_has_one_human_and_the_saved_balance(self):
+        view = self.open_daily(money=250.0)
+        self.assertEqual(view["cash_out"], False)
+        self.assertEqual(view["seed"], 1234)
+        self.assertEqual(len(view["players"]), 1)
+        self.assertEqual(view["players"][0]["bankroll"], 250.0)
+
+    async def test_cashed_out_daily_returns_the_score(self):
+        with mock.patch.object(bj, "get_daily_game", return_value={**self.daily_row(), "cash_out": True, "curr_money": 321.0}):
+            self.assertEqual(bj.create_daily_game(user_id=1), {"cash_out": True, "score": 321.0, "seed": 1234})
+
+    async def test_same_seed_deals_the_same_cards(self):
+        hands = []
+        for _ in range(2):
+            bj.games.clear()
+            view = self.open_daily(seed=99)
+            game = bj.games[view["game_id"]]
+            with mock.patch.object(bj, "_ensure_daily_open"), mock.patch.object(bj, "save_daily_score"):
+                result = await bj.bet(game.game_id, bj.BetRequest(amount=10))
+            hands.append((result["players"][0]["hand"], result["dealer_hand"][:1]))
+        self.assertEqual(hands[0], hands[1])
+
+    async def test_finished_round_saves_the_humans_bankroll(self):
+        view = self.open_daily()
+        game = bj.games[view["game_id"]]
+        with mock.patch.object(bj, "_ensure_daily_open"), mock.patch.object(bj, "save_daily_score") as save:
+            with mock.patch.object(bj, "_new_deck", return_value=rig("10 of hearts", "9 of hearts", "10 of clubs", "7 of clubs")):
+                await bj.bet(game.game_id, bj.BetRequest(amount=10))
+            save.assert_not_called()  # round still in progress
+            bj.stand(game.game_id)
+            save.assert_called_once_with(7, 110.0)
+
+    async def test_daily_actions_are_blocked_once_cashed_out(self):
+        view = self.open_daily()
+        game = bj.games[view["game_id"]]
+        with mock.patch.object(bj, "_ensure_daily_open", side_effect=HTTPException(status_code=409, detail="cashed out")):
+            with self.assertRaises(HTTPException):
+                await bj.bet(game.game_id, bj.BetRequest(amount=10))
+
+    async def test_advice_uses_the_humans_hand(self):
+        game = self.new_game()
+        await self.deal(game, ["10 of hearts", "6 of hearts", "10 of clubs", "7 of clubs"])
+        advice = bj.get_game_advice(game.game_id)
+        self.assertIn(advice["best_move"], ("hit", "stand"))
+        self.assertEqual(advice["bet_amount"], 10.0)
+
+    async def test_advice_needs_the_players_turn_and_no_cpus(self):
+        game = self.new_game()
+        with self.assertRaises(HTTPException):  # no round yet
+            bj.get_game_advice(game.game_id)
+        cpu_game = self.new_game(cpus=1)
+        await self.deal(cpu_game, HUMAN_19 + CPU1_16 + DEALER_17)
+        with self.assertRaises(HTTPException) as ctx:
+            bj.get_game_advice(cpu_game.game_id)
         self.assertEqual(ctx.exception.status_code, 409)
 
 

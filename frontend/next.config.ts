@@ -15,6 +15,10 @@ const nextConfig: NextConfig = {
   async rewrites() {
     return [
       {
+        source: "/api/auth/:path*",
+        destination: "http://localhost:8000/auth/:path*",
+      },
+      {
         source: "/api/blackjack/:path*",
         destination: "http://localhost:8000/:path*",
       },
