@@ -39,6 +39,7 @@ users = Table(
     "users",
     metadata,
     Column("id", Integer, primary_key=True),
+    Column("balance", BigInteger, nullable=False),
     Column("username", String(50), nullable=False, unique=True),
     Column("password", Text, nullable=False),
     Column("salt", Text, nullable=False),
