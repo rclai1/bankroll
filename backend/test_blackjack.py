@@ -6,6 +6,7 @@ player in seat order (2 cards each), then the dealer (2 cards), then hits.
 """
 
 import asyncio
+import logging
 import os
 import sys
 import time
@@ -406,6 +407,50 @@ def make_ctx(**overrides):
     return cpu_agents.CpuContext(**values)
 
 
+class GeminiClientTests(BlackjackTestCase):
+    """The real SDK client, but talking to a mock HTTP transport (no network, no API key use)."""
+
+    async def requests_sent(self, **env):
+        import httpx
+        from google import genai
+        from google.genai import types as gtypes
+
+        hits = []
+
+        def handler(request):
+            hits.append(str(request.url))
+            return httpx.Response(503, json={"error": {"code": 503, "message": "unavailable", "status": "UNAVAILABLE"}})
+
+        real_client = genai.Client
+
+        def client_with_mock_transport(**kwargs):
+            kwargs["http_options"].httpx_async_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+            return real_client(**kwargs)
+
+        with mock.patch.dict(os.environ, env), mock.patch.object(genai, "Client", client_with_mock_transport):
+            client = cpu_agents._build_client(genai, gtypes, "test-key")
+        with self.assertRaises(Exception):
+            await client.aio.interactions.create(model="m", input="hi", timeout=5)
+        self.assertFalse(any("test-key" in url for url in hits))  # the key travels in a header, not the URL
+        return len(hits)
+
+    async def test_sdk_does_not_retry_by_default(self):
+        self.assertEqual(await self.requests_sent(), 1)
+
+    async def test_sdk_retries_are_configurable(self):
+        self.assertEqual(await self.requests_sent(GEMINI_SDK_RETRIES="1"), 2)
+
+    async def test_invalid_retry_setting_falls_back_to_no_retries(self):
+        with self.assertLogs("cpu_agents", level="WARNING"):
+            self.assertEqual(await self.requests_sent(GEMINI_SDK_RETRIES="lots"), 1)
+
+    def test_api_keys_are_redacted_from_log_lines(self):
+        record = logging.LogRecord("httpx", logging.INFO, __file__, 1, 'POST https://x/y?key=SECRET123&a=1 "200 OK"', (), None)
+        cpu_agents._RedactKeys().filter(record)
+        self.assertNotIn("SECRET123", record.getMessage())
+        self.assertIn("key=REDACTED&a=1", record.getMessage())
+
+
 class GeminiAgentTests(BlackjackTestCase):
     async def test_bet_and_action_are_parsed_and_share_one_chain(self):
         client, calls = fake_client(['{"choice": "25%"}', '{"action": "hit"}'])
@@ -424,6 +469,39 @@ class GeminiAgentTests(BlackjackTestCase):
         self.assertEqual(
             first["response_format"]["schema"]["properties"]["choice"]["enum"], [c.value for c in BetChoice]
         )
+
+    async def test_thinking_level_is_sent_and_configurable(self):
+        client, calls = fake_client(['{"action": "hit"}'] * 4)
+        agent = cpu_agents.GeminiCpuAgent(client=client)
+        with mock.patch.dict(os.environ, {"GEMINI_THINKING_LEVEL": ""}):
+            os.environ.pop("GEMINI_THINKING_LEVEL")
+            await agent.choose_action(make_ctx())  # default
+        with mock.patch.dict(os.environ, {"GEMINI_THINKING_LEVEL": "minimal"}):
+            await agent.choose_action(make_ctx())
+        with mock.patch.dict(os.environ, {"GEMINI_THINKING_LEVEL": "default"}):
+            await agent.choose_action(make_ctx())  # explicitly left to the API
+        with mock.patch.dict(os.environ, {"GEMINI_THINKING_LEVEL": "bogus"}):
+            with self.assertLogs("cpu_agents", level="WARNING"):
+                await agent.choose_action(make_ctx())  # invalid values are ignored
+        levels = [c.get("generation_config", {}).get("thinking_level") for c in calls.calls]
+        self.assertEqual(levels, [cpu_agents.GEMINI_THINKING_LEVEL, "minimal", None, None])
+
+    async def test_latency_is_logged_for_success_failure_and_cancellation(self):
+        client, calls = fake_client(['{"action": "hit"}', RuntimeError("boom")])
+        agent = cpu_agents.GeminiCpuAgent(client=client)
+        with self.assertLogs("cpu_agents", level="INFO") as logs:
+            await agent.choose_action(make_ctx(index=2))
+            with self.assertRaises(RuntimeError):
+                await agent.choose_action(make_ctx(index=2))
+        text = "\n".join(logs.output)
+        self.assertRegex(text, r"action \(seat 2, chain turn 1, thinking \w+, \d+ chars\) answered in \d+\.\d\ds")
+        self.assertRegex(text, r"failed after \d+\.\d\ds: RuntimeError: boom")
+
+        slow_client, slow_calls = fake_client(['{"action": "hit"}'], delay=5)
+        slow = cpu_agents.GeminiCpuAgent(client=slow_client)
+        with self.assertLogs("cpu_agents", level="WARNING") as logs:
+            await cpu_agents.timed_cpu_action(slow, make_ctx())
+        self.assertRegex("\n".join(logs.output), r"cancelled after \d+\.\d\ds \(hit the 0s CPU cap\)")
 
     async def test_action_schema_only_lists_legal_actions(self):
         client, calls = fake_client(['{"action": "stand"}'])

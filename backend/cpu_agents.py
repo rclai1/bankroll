@@ -24,6 +24,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
 from dataclasses import dataclass, field
 from enum import Enum
@@ -45,6 +46,16 @@ GEMINI_MODEL = "gemini-3.1-flash-lite"
 # A seat starts a fresh conversation after this many calls (bets + actions) to
 # keep token use and latency bounded. Safe because every prompt is a full snapshot.
 GEMINI_MAX_CHAIN_TURNS = 40
+# How hard the model "thinks" before answering; lower is faster. One of
+# minimal | low | medium | high. Override with env GEMINI_THINKING_LEVEL
+# ("default" or empty = leave it to the API).
+GEMINI_THINKING_LEVEL = "low"
+_THINKING_LEVELS = ("minimal", "low", "medium", "high")
+# How many times the SDK re-sends a failed request on its own (default in the
+# SDK is 3, i.e. up to 4 requests per call, which can outlast our 15 s cap and
+# spend extra rate limit). 0 = never retry; the game already has its own
+# fallbacks. Override with env GEMINI_SDK_RETRIES.
+GEMINI_SDK_RETRIES = 0
 
 
 class BetChoice(str, Enum):
@@ -141,18 +152,89 @@ SYSTEM_INSTRUCTION = (
 _client: Any = None
 
 
+class _RedactKeys(logging.Filter):
+    """Safety net: never let an API key in a URL reach the log."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        message = record.getMessage()
+        redacted = re.sub(r"(key=)[^&\s\"]+", r"\1REDACTED", message)
+        if redacted != message:
+            record.msg, record.args = redacted, ()
+        return True
+
+
+def _configure_logging() -> None:
+    """Show this module's INFO lines (per-call latency) on the server console.
+
+    Level comes from env CPU_AGENT_LOG_LEVEL (default INFO). Unless
+    CPU_AGENT_LOG_HTTP=0, the HTTP client's own log is shown too: one line per
+    request the SDK actually sends, so any retry is visible. Only done once, and
+    only when the real Gemini agent is used.
+    """
+    if logger.handlers:
+        return
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+    handler.addFilter(_RedactKeys())
+    level = os.getenv("CPU_AGENT_LOG_LEVEL", "INFO").upper()
+    targets = [logger]
+    if os.getenv("CPU_AGENT_LOG_HTTP", "1") != "0":
+        targets.append(logging.getLogger("httpx"))
+    for target in targets:
+        target.addHandler(handler)
+        target.setLevel(level)
+        target.propagate = False
+
+
+def _sdk_retries() -> int:
+    value = os.getenv("GEMINI_SDK_RETRIES", str(GEMINI_SDK_RETRIES)).strip()
+    try:
+        return max(0, int(value))
+    except ValueError:
+        logger.warning("Ignoring invalid GEMINI_SDK_RETRIES %r; using %d", value, GEMINI_SDK_RETRIES)
+        return GEMINI_SDK_RETRIES
+
+
+def _thinking_level() -> str | None:
+    """The thinking level to send, or None to leave it to the API."""
+    value = os.getenv("GEMINI_THINKING_LEVEL", GEMINI_THINKING_LEVEL).strip().lower()
+    if value in ("", "default", "none"):
+        return None
+    if value not in _THINKING_LEVELS:
+        logger.warning("Ignoring invalid GEMINI_THINKING_LEVEL %r (use one of %s)", value, ", ".join(_THINKING_LEVELS))
+        return None
+    return value
+
+
 def _get_client() -> Any:
     """The one Gemini client shared by every CPU seat (conversations live in interaction ids, not here)."""
     global _client
     if _client is None:
         from google import genai  # imported lazily so the default agent works without the package
+        from google.genai import types
 
         # The project .env names the key GEMINI_KEY; the SDK's own default is GEMINI_API_KEY.
         api_key = os.getenv("GEMINI_KEY") or os.getenv("GEMINI_API_KEY")
         if not api_key:
             raise RuntimeError("GEMINI_KEY was not found in the project .env file")
-        _client = genai.Client(api_key=api_key)
+        _client = _build_client(genai, types, api_key)
     return _client
+
+
+def _build_client(genai: Any, types: Any, api_key: str) -> Any:
+    """A Gemini client whose Interactions calls retry ``_sdk_retries()`` times (default: never)."""
+    retries = _sdk_retries()
+    # The public retry option cannot go below one retry for Interactions calls
+    # (attempts 0 and 1 both become max_retries=1), so set the count directly afterwards.
+    client = genai.Client(
+        api_key=api_key,
+        http_options=types.HttpOptions(retry_options=types.HttpRetryOptions(attempts=max(1, retries))),
+    )
+    try:
+        client.aio.interactions.sdk_configuration.retry_config.max_retries = retries
+    except AttributeError:
+        logger.warning("Could not change the SDK retry count; the SDK default (about 3 retries) stays in effect")
+    return client
 
 
 def _schema(field_name: str, values: list[str]) -> dict:
@@ -206,6 +288,8 @@ class GeminiCpuAgent:
     """
 
     def __init__(self, client: Any = None, model: str = GEMINI_MODEL) -> None:
+        if client is None:
+            _configure_logging()
         self._client = client if client is not None else _get_client()
         self._model = model
         self._last_id: str | None = None
@@ -260,7 +344,7 @@ class GeminiCpuAgent:
 
     # -- API call --------------------------------------------------------
 
-    async def _ask(self, prompt: str, schema: dict) -> dict:
+    async def _ask(self, prompt: str, schema: dict, *, kind: str, seat: int) -> dict:
         if self._turns >= GEMINI_MAX_CHAIN_TURNS:
             self._last_id, self._turns = None, 0
         request: dict[str, Any] = {
@@ -272,17 +356,28 @@ class GeminiCpuAgent:
             # Give up a little before the server-side cap so the SDK call is cancelled cleanly.
             "timeout": max(1.0, CPU_MAX_ACTION_SECONDS - 1.0),
         }
+        level = _thinking_level()
+        if level:
+            request["generation_config"] = {"thinking_level": level}
         if self._last_id:
             request["previous_interaction_id"] = self._last_id
+        label = f"{kind} (seat {seat}, chain turn {self._turns + 1}, thinking {level or 'default'}, {len(prompt)} chars)"
+        started = time.monotonic()
         try:
             interaction = await self._client.aio.interactions.create(**request)
+        except asyncio.CancelledError:
+            # Our own CPU_MAX_ACTION_SECONDS cap fired (asyncio.wait_for cancels the call).
+            logger.warning("Gemini %s cancelled after %.2fs (hit the %.0fs CPU cap)", label, time.monotonic() - started, CPU_MAX_ACTION_SECONDS)
+            raise
         except Exception as exc:
+            logger.warning("Gemini %s failed after %.2fs: %s: %s", label, time.monotonic() - started, type(exc).__name__, exc)
             # A 4xx while continuing a chain most likely means the stored interaction is gone.
             status = getattr(exc, "status_code", None) or getattr(exc, "code", None)
             if self._last_id and status in (400, 404):
                 logger.warning("Gemini rejected the saved conversation id; starting a new chain")
                 self._last_id, self._turns = None, 0
             raise
+        logger.info("Gemini %s answered in %.2fs", label, time.monotonic() - started)
         # Only advance the chain once the model really answered (a cancelled/failed call leaves it alone).
         self._last_id = interaction.id
         self._turns += 1
@@ -296,6 +391,8 @@ class GeminiCpuAgent:
         data = await self._ask(
             self.build_prompt(ctx, betting=True),
             _schema("choice", [c.value for c in BetChoice]),
+            kind="bet",
+            seat=ctx.index,
         )
         self._mark_seen(ctx)
         return BetChoice(data["choice"])
@@ -306,6 +403,8 @@ class GeminiCpuAgent:
         data = await self._ask(
             self.build_prompt(ctx),
             _schema("action", [a.value for a in ctx.legal_actions]),
+            kind="action",
+            seat=ctx.index,
         )
         self._mark_seen(ctx)
         return Action(data["action"])
