@@ -6,6 +6,7 @@ import greenPack from "@/assets/packs/green.png";
 import orangePack from "@/assets/packs/orange.png";
 import redPack from "@/assets/packs/red.png";
 import { SKIN_COORDS, type CardSkin } from "./Card";
+import { apiFetch } from "@/lib/api";
 
 const SKINS: CardSkin[] = ["default", "gray", "blue", "yellow", "green", "fade", "ancient", "maze", "stars", "wedges", "transit"];
 const PACKS = [bluePack, greenPack, orangePack, redPack];
@@ -15,7 +16,7 @@ const CURRENCY_COORD = [4, 4] as const; // Sheet coordinate (5, 5), converted to
 const CURRENCY_SPRITE_CENTER = [27, 28] as const;
 
 async function shopRequest(path: string, body?: unknown) {
-  const response = await fetch(`/api/shop${path}`, {
+  const response = await apiFetch(`/api/shop${path}`, {
     method: body ? "POST" : "GET",
     headers: body ? { "Content-Type": "application/json" } : undefined,
     body: body ? JSON.stringify(body) : undefined,

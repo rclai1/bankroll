@@ -1,26 +1,23 @@
 """Registration and login endpoints."""
 
 import hashlib
-import os
-import secrets
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
-from fastapi import APIRouter, Cookie, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
-from .auth import hash_password, verify_password
+from .auth import get_token_user_id, hash_password, issue_access_token, verify_password
 from .database import auth_sessions, engine, users
 
 router = APIRouter(prefix="/auth", tags=["authentication"])
-SESSION_COOKIE = "bankroll_session"
-SESSION_DAYS = 30
+bearer_scheme = HTTPBearer(auto_error=False)
 
 
-def _start_session(response: Response, user_id: int) -> None:
-    token = secrets.token_urlsafe(32)
-    expires_at = datetime.now(timezone.utc) + timedelta(days=SESSION_DAYS)
+def _start_session(user_id: int) -> str:
+    token, expires_at = issue_access_token(user_id)
     with engine.begin() as connection:
         connection.execute(
             auth_sessions.insert().values(
@@ -29,19 +26,7 @@ def _start_session(response: Response, user_id: int) -> None:
                 expires_at=expires_at,
             )
         )
-    response.set_cookie(
-        SESSION_COOKIE,
-        token,
-        max_age=SESSION_DAYS * 24 * 60 * 60,
-        httponly=True,
-        secure=os.getenv("COOKIE_SECURE", "").lower() in {"1", "true", "yes"},
-        samesite="lax",
-        path="/",
-    )
-
-
-def _clear_session(response: Response) -> None:
-    response.delete_cookie(SESSION_COOKIE, path="/", httponly=True, samesite="lax")
+    return token
 
 
 class CredentialsRequest(BaseModel):
@@ -50,7 +35,7 @@ class CredentialsRequest(BaseModel):
 
 
 @router.post("/register", status_code=201)
-def register(request: CredentialsRequest, response: Response):
+def register(request: CredentialsRequest):
     """Create an account, storing a plain username and password hash."""
     password_fields = hash_password(request.password)
     try:
@@ -66,14 +51,14 @@ def register(request: CredentialsRequest, response: Response):
                 .returning(users.c.id, users.c.username)
             )
             user = dict(result.mappings().one())
-        _start_session(response, user["id"])
-        return user
+        token = _start_session(user["id"])
+        return {**user, "access_token": token, "token_type": "bearer"}
     except IntegrityError as exc:
         raise HTTPException(status_code=409, detail="Username already exists") from exc
 
 
 @router.post("/login")
-def login(request: CredentialsRequest, response: Response):
+def login(request: CredentialsRequest):
     """Verify credentials and return the user's public account identity."""
     with engine.connect() as connection:
         user = connection.execute(
@@ -86,15 +71,26 @@ def login(request: CredentialsRequest, response: Response):
     ):
         raise HTTPException(status_code=401, detail="Invalid username or password")
 
-    _start_session(response, user["id"])
-    return {"id": user["id"], "username": user["username"]}
+    token = _start_session(user["id"])
+    return {
+        "id": user["id"],
+        "username": user["username"],
+        "access_token": token,
+        "token_type": "bearer",
+    }
 
 
 @router.get("/session")
-def get_session(bankroll_session: str | None = Cookie(default=None)):
-    if not bankroll_session:
+def get_session(
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+):
+    if credentials is None:
         return None
-    token_hash = hashlib.sha256(bankroll_session.encode()).hexdigest()
+    token = credentials.credentials
+    user_id = get_token_user_id(token)
+    if user_id is None:
+        return None
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
     with engine.begin() as connection:
         user = connection.execute(
             select(users.c.id, users.c.username)
@@ -102,6 +98,7 @@ def get_session(bankroll_session: str | None = Cookie(default=None)):
             .where(
                 auth_sessions.c.token_hash == token_hash,
                 auth_sessions.c.expires_at > datetime.now(timezone.utc),
+                users.c.id == user_id,
             )
         ).mappings().one_or_none()
         if user is None:
@@ -111,9 +108,10 @@ def get_session(bankroll_session: str | None = Cookie(default=None)):
 
 
 @router.post("/logout", status_code=204)
-def logout(response: Response, bankroll_session: str | None = Cookie(default=None)):
-    if bankroll_session:
-        token_hash = hashlib.sha256(bankroll_session.encode()).hexdigest()
+def logout(
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+):
+    if credentials is not None:
+        token_hash = hashlib.sha256(credentials.credentials.encode()).hexdigest()
         with engine.begin() as connection:
             connection.execute(auth_sessions.delete().where(auth_sessions.c.token_hash == token_hash))
-    _clear_session(response)

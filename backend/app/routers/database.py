@@ -8,7 +8,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import APIRouter, Cookie, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 from sqlalchemy import (
     Boolean,
@@ -28,6 +29,7 @@ from sqlalchemy import (
     create_engine,
     text,
 )
+from .auth import get_token_user_id
 
 load_dotenv(Path(__file__).resolve().parents[3] / ".env")
 connection = os.getenv("CONNECTION")
@@ -92,6 +94,7 @@ auth_sessions = Table(
 )
 
 router = APIRouter()
+bearer_scheme = HTTPBearer(auto_error=False)
 
 
 class CreateHighScoreRequest(BaseModel):
@@ -115,17 +118,19 @@ RARE_SKINS = CARD_SKINS[4:]
 SHOP_COST = 10
 
 
-def _shop_user(connection, session_token: str | None, *, lock: bool = False):
-    if not session_token:
+def _shop_user(connection, token: str | None, *, lock: bool = False):
+    user_id = get_token_user_id(token) if token else None
+    if user_id is None:
         raise HTTPException(status_code=401, detail="Sign in to use the card shop")
-    token_hash = hashlib.sha256(session_token.encode()).hexdigest()
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
     suffix = " FOR UPDATE" if lock else ""
     user = connection.execute(text(
         "SELECT users.id, users.balance, users.equipped_skin, "
         + ", ".join(f'users."{name}"' for name in CARD_SKINS)
         + " FROM users JOIN auth_sessions ON users.id = auth_sessions.user_id "
-        "WHERE auth_sessions.token_hash = :token_hash AND auth_sessions.expires_at > :now" + suffix
-    ), {"token_hash": token_hash, "now": datetime.now(timezone.utc)}).mappings().one_or_none()
+        "WHERE auth_sessions.token_hash = :token_hash AND auth_sessions.expires_at > :now "
+        "AND users.id = :user_id" + suffix
+    ), {"token_hash": token_hash, "now": datetime.now(timezone.utc), "user_id": user_id}).mappings().one_or_none()
     if user is None:
         raise HTTPException(status_code=401, detail="Sign in to use the card shop")
     return user
@@ -137,15 +142,17 @@ def _shop_payload(user):
 
 
 @router.get("/shop")
-def get_shop(bankroll_session: str | None = Cookie(default=None)):
+def get_shop(credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme)):
+    token = credentials.credentials if credentials else None
     with engine.connect() as connection:
-        return _shop_payload(_shop_user(connection, bankroll_session))
+        return _shop_payload(_shop_user(connection, token))
 
 
 @router.post("/shop/roll")
-def roll_shop(bankroll_session: str | None = Cookie(default=None)):
+def roll_shop(credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme)):
+    token = credentials.credentials if credentials else None
     with engine.begin() as connection:
-        user = _shop_user(connection, bankroll_session, lock=True)
+        user = _shop_user(connection, token, lock=True)
         if user["balance"] < SHOP_COST:
             raise HTTPException(status_code=409, detail="Not enough aircoin")
         result = random.choices(("nothing", "common", "rare"), weights=(80, 15, 5), k=1)[0]
@@ -157,7 +164,7 @@ def roll_shop(bankroll_session: str | None = Cookie(default=None)):
             + (f', "{reward}" = 1' if reward else "")
             + " WHERE id = :user_id"
         ), {"cost": SHOP_COST, "refund": refund, "user_id": user["id"]})
-        updated = _shop_user(connection, bankroll_session)
+        updated = _shop_user(connection, token)
         return {**_shop_payload(updated), "result": result, "reward": reward,
                 "duplicate": duplicate, "refund": refund}
 
@@ -167,15 +174,19 @@ class EquipSkinRequest(BaseModel):
 
 
 @router.post("/shop/equip")
-def equip_shop_skin(request: EquipSkinRequest, bankroll_session: str | None = Cookie(default=None)):
+def equip_shop_skin(
+    request: EquipSkinRequest,
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+):
+    token = credentials.credentials if credentials else None
     if request.skin != "default" and request.skin not in CARD_SKINS:
         raise HTTPException(status_code=400, detail="Unknown card skin")
     with engine.begin() as connection:
-        user = _shop_user(connection, bankroll_session, lock=True)
+        user = _shop_user(connection, token, lock=True)
         if request.skin != "default" and user[request.skin] != 1:
             raise HTTPException(status_code=403, detail="You do not own this card skin")
         connection.execute(text("UPDATE users SET equipped_skin = :skin WHERE id = :user_id"), {"skin": request.skin, "user_id": user["id"]})
-        updated = _shop_user(connection, bankroll_session)
+        updated = _shop_user(connection, token)
         return _shop_payload(updated)
 
 
