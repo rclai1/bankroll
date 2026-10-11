@@ -26,6 +26,7 @@ def register(request: CredentialsRequest):
                 users.insert()
                 .values(
                     username=request.username,
+                    balance=10,
                     password=password_fields["password_hash"],
                     salt=password_fields["password_salt"],
                 )
