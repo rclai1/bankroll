@@ -54,8 +54,9 @@ export default function Scene({
     if (!interactive) return;
     const target = bubbles.find((b) => b.id === id);
     if (!target || target.phase === "popping") return;
+    const poppedFrom = target.phase;
     play("menu.bubblePop");
-    setBubbles((list) => list.map((b) => (b.id === id ? { ...b, phase: "popping", poppedFrom: b.phase } : b)));
+    setBubbles((list) => list.map((b) => (b.id === id ? { ...b, phase: "popping", poppedFrom } : b)));
   }
 
   function onAnimationEnd(b: BubbleState, animationName: string) {
