@@ -181,11 +181,11 @@ def explain_ev(request: EVExplanationRequest):
         "resulting state. The calculation conditions the hidden-card possibilities on the fact this hand is "
         "still active (dealer did not start with blackjack). State that EV is not a prediction of this one hand "
         "and assumes this game's hit/stand rules; suits do not affect values. Be very concise and accessible "
-        "with no long derivation or repeated facts. "
-        "If using math, ensure every LaTeX "
+        "with your explanation. "
+        "When math, ensure every LaTeX "
         "expression is syntactically valid and fully enclosed: use $...$ for inline math and $$...$$ for display math. "
-        "Do not use unmatched dollar signs, mix delimiters, or put ordinary prose inside math delimiters. "
-        "Check that all braces and parentheses are balanced before responding.\n\n"
+        "Do not put plain text inside mathematical expressions, such as within $..$ or $$..$$."
+        "Check that all braces and parentheses are balanced before responding. Do not use backslashes. Make sure dollar amounts have $ (dollar sign). \n\n"
         f"Current hand facts: {json.dumps(request.dict())}"
     )
     try:
@@ -193,6 +193,9 @@ def explain_ev(request: EVExplanationRequest):
         interaction = client.interactions.create(
             model="gemini-3.8-flash",
             input=prompt,
+            generation_config={
+                "thinking_level": "medium"
+            }
         )
         explanation = interaction.output_text.strip()
     except Exception as exc:

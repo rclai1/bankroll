@@ -16,8 +16,6 @@ import { play, useBgm } from "@/audio/useSound";
 import { selectDealSound, selectHitSound } from "@/audio/soundConfig";
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
-const LEARNING_INTRO_STORAGE_KEY = "learning-mode-intro-seen-v2";
-
 function normalizeLatexDelimiters(markdown: string) {
   return markdown
     .replace(/\\\[([\s\S]+?)\\\]/g, (_, formula: string) => `$$\n${formula}\n$$`)
@@ -89,19 +87,10 @@ export default function Game({ mode, onExit }: { mode: ModeId; onExit: () => voi
 
   useEffect(() => {
     if (mode !== "learning") return;
-    try {
-      setShowLearningIntro(window.localStorage.getItem(LEARNING_INTRO_STORAGE_KEY) !== "1");
-    } catch {
-      setShowLearningIntro(true);
-    }
+    setShowLearningIntro(true);
   }, [mode]);
 
   function dismissLearningIntro() {
-    try {
-      window.localStorage.setItem(LEARNING_INTRO_STORAGE_KEY, "1");
-    } catch {
-      // Keep the introduction dismissible if browser storage is unavailable.
-    }
     setShowLearningIntro(false);
   }
 
@@ -345,8 +334,8 @@ export default function Game({ mode, onExit }: { mode: ModeId; onExit: () => voi
                   {normalizeLatexDelimiters(evExplanation)}
                 </ReactMarkdown>
               </div>
-            )}
-            <button className="btn btn-green ev-explanation-dismiss" onClick={() => setShowEVExplanation(false)}>Close</button>
+            )}  
+            <button className="btn btn-green ev-explanation-dismiss" onClick={() => setShowEVExplanation(false)}>Ok!</button>
           </section>
         </div>,
         document.body,
@@ -473,7 +462,7 @@ export default function Game({ mode, onExit }: { mode: ModeId; onExit: () => voi
                   <span>Hit EV {formatMoney(advice.hit_ev)}</span>
                   <span>Stand EV {formatMoney(advice.stand_ev)}</span>
                   <small>Expected net change from this point in the hand.</small>
-                  <button className="btn btn-orange ev-explain-button" onClick={explainEV}>Explain the maths</button>
+                  <button className="btn btn-blue ev-explain-button" onClick={explainEV}>Explain the maths</button>
                 </div>
               )}
             </div>
@@ -494,7 +483,7 @@ export default function Game({ mode, onExit }: { mode: ModeId; onExit: () => voi
                   <span>Hit EV {formatMoney(advice.hit_ev)}</span>
                   <span>Stand EV {formatMoney(advice.stand_ev)}</span>
                   <small>Expected net change from this point in the hand.</small>
-                  <button className="btn btn-orange ev-explain-button" onClick={explainEV}>Explain the maths</button>
+                  <button className="btn btn-blue ev-explain-button" onClick={explainEV}>Explain the maths</button>
                 </div>
               )}
             </div>
