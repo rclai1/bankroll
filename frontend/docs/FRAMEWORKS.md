@@ -30,7 +30,7 @@ Audio files live in `src/assets/sfx/`. Link one in `src/audio/soundConfig.ts` by
 | `nextRound` | `Game.tsx` "Next round" / "new game" button | |
 | `blackjack.player` / `blackjack.dealer` / `blackjack.both` | `Game.tsx` `settleRound`, via `ROUND_EVENTS[...].sfx` | Natural blackjack for the player, the dealer, or both |
 | `bust` | `Game.tsx` `settleRound`, via `ROUND_EVENTS.bust.sfx` | The player busts |
-| `gacha.nothing` / `gacha.dupe` / `gacha.hit` | not triggered yet (Card Shop is not built) | Ready for the gacha pulls |
+| `gacha.nothing` / `gacha.dupe` / `gacha.hit` | `CardShop.tsx` `openCase()` | A pack with no skin / a skin you already own (refunded) / a new skin; plays when the result arrives, as the reveal pop-up opens |
 
 To add a new sound: add a key to `SOUNDS` in `soundConfig.ts`, then call
 `play("your.key")` where it should fire (or reference it from a `sfx` field in
